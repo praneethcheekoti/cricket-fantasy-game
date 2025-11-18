@@ -1,0 +1,314 @@
+// Prisma Schema - Works with SQLite (local) and MongoDB (cloud)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb" // Change to "mongodb" when switching
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  email         String         @unique
+  password      String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  tournaments   TournamentParticipant[]
+  bids          Bid[]
+  teams         Team[]
+}
+
+model Series {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  format        String         // "ODI", "Test", "T20"
+  gender        String         // "Men", "Women"
+  startDate     DateTime
+  endDate       DateTime
+  teams         String         // JSON string: ["India", "Australia"]
+  status        String         @default("upcoming") // "upcoming", "ongoing", "completed"
+  
+  tournaments   Tournament[]
+  matches       Match[]
+}
+
+model Tournament {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  code          String         @unique
+  seriesId      String
+  creatorId     String
+  status        String         @default("setup") // "setup", "locked", "auction", "live", "completed"
+  
+  // Scoring Rules (JSON strings for flexibility)
+  battingRules  String         // JSON: {runs: 1, fours: 4, sixes: 6, fifty: 50, century: 100, duck: -10, strikeRateBonus: {...}}
+  bowlingRules  String         // JSON: {wicket: 25, maiden: 10, economyBonus: {...}, threeWickets: 30, fiveWickets: 50}
+  fieldingRules String         // JSON: {catch: 10, runOut: 15, stumping: 15}
+  captainRules  String         // JSON: {enabled: true, captainMultiplier: 2, viceCaptainMultiplier: 1.5}
+  awardRules    String         // JSON: {manOfMatch: 50, playerOfSeries: 100}
+  compositionRules String      // JSON: {minBatsmen: 0, minBowlers: 0, minAllRounders: 0, minWicketKeepers: 0}
+  
+  walletAmount  Float          @default(10000000000) // Rs 100 Cr in paise
+  
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  series        Series         @relation(fields: [seriesId], references: [id])
+  participants  TournamentParticipant[]
+  teams         Team[]
+  auctionPlayers AuctionPlayer[]
+}
+
+model TournamentParticipant {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId  String
+  userId        String
+  rulesLocked   Boolean        @default(false)
+  joinedAt      DateTime       @default(now())
+  
+  tournament    Tournament     @relation(fields: [tournamentId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  
+  // // @@unique([tournamentId, userId]) // Handle uniqueness in application // Handle uniqueness in application
+}
+
+model AuctionPlayer {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId  String
+  playerId      String         // Real cricket player ID
+  playerName    String
+  role          String         // "Batsman", "Bowler", "All-Rounder", "Wicket-Keeper"
+  tier          String         // "A", "B", "C", "D"
+  basePrice     Float          // in paise
+  currentPrice  Float?
+  soldTo        String?        // Team ID
+  status        String         @default("available") // "available", "sold"
+  
+  // Player Stats (JSON)
+  overallStats  String         // JSON: international career stats
+  vsOpponentStats String       // JSON: stats against tournament opposition
+  
+  tournament    Tournament     @relation(fields: [tournamentId], references: [id])
+  bids          Bid[]
+}
+
+model Bid {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  playerId      String
+  userId        String
+  teamId        String
+  amount        Float          // in paise
+  timestamp     DateTime       @default(now())
+  
+  player        AuctionPlayer  @relation(fields: [playerId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  team          Team           @relation(fields: [teamId], references: [id])
+}
+
+model Team {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId  String
+  userId        String
+  name          String
+  walletBalance Float          // Remaining balance in paise
+  
+  players       TeamPlayer[]
+  bids          Bid[]
+  
+  tournament    Tournament     @relation(fields: [tournamentId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  
+  // // @@unique([tournamentId, userId]) // Handle uniqueness in application // Handle uniqueness in application
+}
+
+model TeamPlayer {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  teamId        String
+  playerId      String         // Real cricket player ID
+  playerName    String
+  role          String
+  purchasePrice Float          // in paise
+  isCaptain     Boolean        @default(false)
+  isViceCaptain Boolean        @default(false)
+  
+  team          Team           @relation(fields: [teamId], references: [id])
+  matchScores   MatchPlayerScore[]
+}
+
+model Match {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  seriesId      String
+  matchNumber   Int
+  team1         String
+  team2         String
+  venue         String
+  matchDate     DateTime
+  status        String         @default("upcoming") // "upcoming", "live", "completed"
+  externalMatchId String?      // ID from cricket API
+  
+  series        Series         @relation(fields: [seriesId], references: [id])
+  playerScores  MatchPlayerScore[]
+}
+
+model MatchPlayerScore {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  matchId       String
+  teamPlayerId  String
+  playerId      String         // Real cricket player ID
+  
+  // Real match performance
+  runs          Int            @default(0)
+  ballsFaced    Int            @default(0)
+  fours         Int            @default(0)
+  sixes         Int            @default(0)
+  wickets       Int            @default(0)
+  ballsBowled   Int            @default(0)
+  runsConceded  Int            @default(0)
+  maidens       Int            @default(0)
+  catches       Int            @default(0)
+  runOuts       Int            @default(0)
+  stumpings     Int            @default(0)
+  isManOfMatch  Boolean        @default(false)
+  
+  // Calculated fantasy points
+  fantasyPoints Float          @default(0)
+  
+  match         Match          @relation(fields: [matchId], references: [id])
+  teamPlayer    TeamPlayer     @relation(fields: [teamPlayerId], references: [id])
+  
+  // @@unique([matchId, teamPlayerId]) // Handle uniqueness in application
+}
+
+// ========================================
+// CACHE MODELS - For API Data Caching
+// ========================================
+
+model SeriesCache {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  apiSeriesId   String   @unique // External API reference (automatically indexed)
+  apiSource     String   // Which API provided this data (cricapi, rapidapi, cricbuzz)
+  name          String
+  shortName     String?
+  format        String   // ODI, Test, T20
+  gender        String   // Men, Women
+  teams         String   // JSON array of team names
+  startDate     DateTime
+  endDate       DateTime
+  status        String   // upcoming, live, completed
+  metadata      String?  // JSON - Additional data from API
+  cachedAt      DateTime @default(now())
+  expiresAt     DateTime
+  
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model MatchCache {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  apiMatchId    String   @unique // Automatically indexed
+  apiSource     String
+  apiSeriesId   String
+  team1         String
+  team2         String
+  team1Code     String?  // e.g., IND, AUS
+  team2Code     String?
+  venue         String
+  city          String?
+  matchDate     DateTime
+  format        String
+  matchType     String   // bilateral, tournament
+  status        String   // upcoming, live, completed
+  tossWinner    String?
+  tossDecision  String?
+  result        String?
+  metadata      String?  // JSON
+  cachedAt      DateTime @default(now())
+  expiresAt     DateTime
+  
+  @@index([apiSeriesId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model PlayerCache {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  apiPlayerId   String   @unique // Automatically indexed
+  apiSource     String
+  name          String
+  fullName      String?
+  role          String   // Batsman, Bowler, All-Rounder, Wicket-Keeper
+  battingStyle  String?
+  bowlingStyle  String?
+  team          String
+  country       String
+  imageUrl      String?
+  overallStats  String   // JSON: { batting: {}, bowling: {}, fielding: {} }
+  cachedAt      DateTime @default(now())
+  expiresAt     DateTime
+  
+  @@index([team])
+  @@index([expiresAt])
+}
+
+model PlayerMatchStats {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  apiPlayerId   String
+  apiMatchId    String
+  apiSource     String
+  vsTeam        String   // Stats against specific opponent
+  venue         String?
+  venueType     String?  // home, away, neutral
+  stats         String   // JSON - Detailed stats for this match/opponent combo
+  cachedAt      DateTime @default(now())
+  expiresAt     DateTime
+  
+  @@index([apiPlayerId])
+  @@index([apiMatchId])
+  @@index([expiresAt])
+}
+
+model LiveScoreCache {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  apiMatchId    String    @unique // Automatically indexed
+  apiSource     String
+  scorecard     String    // JSON scorecard data
+  isCompressed  Boolean   @default(false)
+  currentInning Int?
+  team1Score    String?
+  team2Score    String?
+  currentOver   String?
+  recentBalls   String?   // JSON
+  lastBallTime  DateTime?
+  cachedAt      DateTime  @default(now())
+  expiresAt     DateTime
+  
+  @@index([expiresAt])
+}
+
+model ApiUsageTracker {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  apiName       String   @unique // cricapi, rapidapi, cricbuzz, cricketdata (automatically indexed)
+  date          DateTime @default(now())
+  callsToday    Int      @default(0)
+  dailyLimit    Int
+  isActive      Boolean  @default(true)
+  lastCallAt    DateTime?
+  lastResetAt   DateTime @default(now())
+  errorCount    Int      @default(0)
+  
+  @@index([date])
+}
+
+model CacheStatistics {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  date            DateTime @default(now()) @unique
+  cacheHits       Int      @default(0)
+  cacheMisses     Int      @default(0)
+  apiCalls        Int      @default(0)
+  avgResponseTime Int?
+}
+
