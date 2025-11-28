@@ -1,5 +1,8 @@
 const CricAPIProvider = require('./providers/cricapi-provider');
 const CricbuzzProvider = require('./providers/cricbuzz-provider');
+const CricketDataProvider = require('./providers/cricketdata-provider');
+const RapidAPICricbuzzProvider = require('./providers/rapidapi-cricbuzz-provider');
+const UnofficialCricbuzzProvider = require('./providers/unofficial-cricbuzz-provider');
 const apiUsageTracker = require('./api-usage-tracker');
 
 /**
@@ -30,18 +33,29 @@ class ApiSelector {
 
       // Initialize providers
       this.providers = {
+        cricketdata: new CricketDataProvider(process.env.CRICKETDATA_API_KEY),
         cricapi: new CricAPIProvider(process.env.CRICAPI_KEY),
-        rapidapi: null, // TODO: Implement RapidAPI provider
+        rapidapi: new RapidAPICricbuzzProvider(process.env.RAPIDAPI_KEY, process.env.RAPIDAPI_HOST),
         cricbuzz: new CricbuzzProvider(),
-        cricketdata: null // TODO: Implement CricketData provider
+        unofficial: new UnofficialCricbuzzProvider(process.env.UNOFFICIAL_CRICBUZZ_API_KEY)
       };
 
       // Filter out disabled providers
+      const enableCricketData = process.env.ENABLE_CRICKETDATA !== 'false';
       const enableCricapi = process.env.ENABLE_CRICAPI !== 'false';
+      const enableRapidAPI = process.env.ENABLE_RAPIDAPI === 'true';
       const enableCricbuzz = process.env.ENABLE_CRICBUZZ !== 'false';
+
+      if (!enableCricketData) {
+        this.providers.cricketdata = null;
+      }
 
       if (!enableCricapi) {
         this.providers.cricapi = null;
+      }
+
+      if (!enableRapidAPI) {
+        this.providers.rapidapi = null;
       }
 
       if (!enableCricbuzz) {
@@ -49,8 +63,18 @@ class ApiSelector {
       }
 
       this.initialized = true;
-      console.log('[API Selector] ✅ Initialized with providers:', 
-        Object.keys(this.providers).filter(k => this.providers[k] !== null));
+      
+      const activeProviders = Object.keys(this.providers).filter(k => this.providers[k] !== null);
+      console.log('[API Selector] ✅ Initialized with providers:', activeProviders);
+      
+      // Log each provider's status
+      for (const [name, provider] of Object.entries(this.providers)) {
+        if (provider && provider.isEnabled) {
+          console.log(`  ✅ [${provider.name}] Enabled (API Key: ${provider.apiKey ? '✓' : '✗'})`);
+        } else if (provider) {
+          console.log(`  ⚠️  [${provider.name}] Disabled`);
+        }
+      }
     } catch (error) {
       console.error('[API Selector] ❌ Initialization failed:', error.message);
     }
@@ -123,26 +147,36 @@ class ApiSelector {
    */
   getProviderPriority(requestType) {
     // Strategy:
-    // - CricAPI for static data (series, matches, squads)
-    // - Cricbuzz for live data (live scores)
-    // - RapidAPI as secondary
-    // - CricketData as backup
+    // - Unofficial Cricbuzz for series, squads, players (format-specific squads!)
+    // - RapidAPI Cricbuzz for player stats (pre-auction tier calculation)
+    // - CrickkAPI for dynamic stats (during auction) - handled separately
+    // - CricketData as fallback
 
     switch (requestType) {
       case 'series':
-      case 'match':
       case 'squad':
+        // Use Unofficial Cricbuzz (has format-specific squads)
+        return ['unofficial', 'cricketdata', 'cricapi'];
+
+      case 'match':
+        // Match data - CricketData is fine (not using live scores yet)
+        return ['cricketdata', 'unofficial', 'cricapi'];
+
       case 'player':
-        // Static data - use primary APIs first
-        return ['cricapi', 'rapidapi', 'cricketdata', 'cricbuzz'];
+        // Player list - use Unofficial Cricbuzz (squad-based)
+        return ['unofficial', 'cricketdata', 'cricapi'];
+
+      case 'playerStats':
+        // Player stats - use RapidAPI Cricbuzz (career stats for tier calculation)
+        return ['rapidapi', 'cricketdata', 'cricapi'];
 
       case 'liveScore':
-        // Live data - use Cricbuzz first (unlimited), then others
-        return ['cricbuzz', 'rapidapi', 'cricapi', 'cricketdata'];
+        // Live data - not implemented yet, but Cricbuzz would be primary
+        return ['cricbuzz', 'unofficial', 'cricketdata'];
 
       default:
         // Default priority
-        return ['cricapi', 'rapidapi', 'cricbuzz', 'cricketdata'];
+        return ['unofficial', 'cricketdata', 'cricapi', 'rapidapi', 'cricbuzz'];
     }
   }
 

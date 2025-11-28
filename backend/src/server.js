@@ -14,6 +14,9 @@ const { cleanupExpiredCache } = require('./jobs/cache-cleanup.job');
 const { checkAndResetIfNeeded } = require('./jobs/api-reset.job');
 const { refreshLiveScores } = require('./jobs/live-score.job');
 
+// Cricket API Service
+const cricketApiService = require('./services/cricket-api');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -21,8 +24,8 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({
   origin: [
     'http://localhost:3000', // Local development
-    'https://cricket-fantasy-game.vercel.app', // Production frontend
-    process.env.FRONTEND_URL // Any additional URLs from env
+    'https://cricket-fantasy-game.vercel.app', // Old production URL
+    process.env.FRONTEND_URL // Your new Vercel URL (set in Render env vars)
   ].filter(Boolean),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -60,6 +63,10 @@ const runStartupJobs = async () => {
   console.log('========================================\n');
 
   try {
+    // Job 0: Initialize Cricket API Service
+    console.log('0️⃣ Initializing Cricket API providers...');
+    await cricketApiService.initialize();
+
     // Job 1: Cleanup expired cache
     console.log('1️⃣ Running cache cleanup...');
     await cleanupExpiredCache();

@@ -41,6 +41,7 @@ model Tournament {
   name          String
   code          String         @unique
   seriesId      String
+  format        String         @default("ODI") // "Test", "ODI", "T20"
   creatorId     String
   status        String         @default("setup") // "setup", "locked", "auction", "live", "completed"
   
@@ -53,6 +54,10 @@ model Tournament {
   compositionRules String      // JSON: {minBatsmen: 0, minBowlers: 0, minAllRounders: 0, minWicketKeepers: 0}
   
   walletAmount  Float          @default(10000000000) // Rs 100 Cr in paise
+  bidTimer      Int            @default(30) // Auction bid timer in seconds (default 30)
+  isPaused      Boolean        @default(false) // Is auction currently paused
+  pausedBy      String?        // User ID who paused the auction
+  pausedAt      DateTime?      // When auction was paused
   
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -82,6 +87,7 @@ model AuctionPlayer {
   playerId      String         // Real cricket player ID
   playerName    String
   role          String         // "Batsman", "Bowler", "All-Rounder", "Wicket-Keeper"
+  team          String         // Cricket team: "India", "Australia", "England", etc.
   tier          String         // "A", "B", "C", "D"
   basePrice     Float          // in paise
   currentPrice  Float?

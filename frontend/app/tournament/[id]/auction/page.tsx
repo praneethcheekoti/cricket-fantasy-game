@@ -30,10 +30,22 @@ export default function AuctionPage() {
   const [timerActive, setTimerActive] = useState(false)
   const [isCompletingAuction, setIsCompletingAuction] = useState(false) // Prevent duplicate calls
   const [pollingEnabled, setPollingEnabled] = useState(true) // Control polling
+  const [bidHistory, setBidHistory] = useState<any[]>([]) // Bid history for current player
+  const [tournament, setTournament] = useState<any>(null) // Tournament data including bidTimer
+  const bidTimerDuration = tournament?.bidTimer || 30 // Use tournament's bidTimer or default to 30
+  const [dynamicStats, setDynamicStats] = useState<any>(null) // Dynamic stats for current player
+  const [isLoadingStats, setIsLoadingStats] = useState(false) // Loading state for dynamic stats
+  const [isPaused, setIsPaused] = useState(false) // Auction pause state
+  const [pausedBy, setPausedBy] = useState<string | null>(null) // User who paused
+  const [pausedByName, setPausedByName] = useState<string>('') // Name of user who paused
+  const [isPauseActionLoading, setIsPauseActionLoading] = useState(false) // Loading state for pause/unpause
 
   // Computed values - defined early so useEffect can use them
   const currentPlayer = players[currentPlayerIndex]
   const upcomingPlayers = players.slice(currentPlayerIndex + 1, currentPlayerIndex + 6)
+  const unsoldPlayers = players.filter((p: any) => p.status === 'unsold')
+  const availablePlayers = players.filter((p: any) => p.status === 'available')
+  const isAuctionComplete = players.length > 0 && availablePlayers.length === 0 && currentPlayerIndex === -1
   const currentBid = currentPlayer?.currentPrice || currentPlayer?.basePrice || 0
   const highestBidder = currentPlayer?.highestBidder
 
@@ -63,10 +75,15 @@ export default function AuctionPage() {
     }
 
     setTimerActive(true)
-    setTimeRemaining(30) // Reset to 30 seconds for new player
+    setTimeRemaining(bidTimerDuration) // Reset to tournament's bid timer for new player
     setIsCompletingAuction(false) // Reset flag for new player
 
     const countdown = setInterval(() => {
+      // Don't decrement if auction is paused
+      if (isPaused) {
+        return
+      }
+      
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(countdown)
@@ -79,26 +96,72 @@ export default function AuctionPage() {
     return () => {
       clearInterval(countdown)
     }
-  }, [currentPlayer?.id])
+  }, [currentPlayer?.id, bidTimerDuration, isPaused])
 
   // Separate effect to handle timer expiry
   useEffect(() => {
-    if (timeRemaining === 0 && currentPlayer && !isCompletingAuction && currentPlayer.status === 'available') {
+    if (timeRemaining === 0 && currentPlayer && !isCompletingAuction && !isPaused && currentPlayer.status === 'available') {
       console.log('⏰⏰⏰ TIMER HIT ZERO! Completing player auction')
       console.log('Current player:', currentPlayer.playerName)
       completePlayerAuction()
     }
-  }, [timeRemaining, currentPlayer?.id, isCompletingAuction])
+  }, [timeRemaining, currentPlayer?.id, isCompletingAuction, isPaused])
 
   // Reset timer when new bid is placed
   useEffect(() => {
     if (currentBid > 0 && currentPlayer) {
-      setTimeRemaining(30) // Reset to 30 seconds on new bid
+      setTimeRemaining(bidTimerDuration) // Reset to tournament's bid timer on new bid
     }
-  }, [currentBid])
+  }, [currentBid, bidTimerDuration])
+
+  // Fetch bid history when current player changes
+  useEffect(() => {
+    if (currentPlayer?.id) {
+      fetchBidHistory(currentPlayer.id)
+    } else {
+      setBidHistory([])
+    }
+  }, [currentPlayer?.id])
+
+  // Fetch dynamic stats when current player changes and has no stats
+  useEffect(() => {
+    if (currentPlayer?.id) {
+      // Check if player has stats
+      const hasStats = currentPlayer.overallStats && Object.keys(currentPlayer.overallStats).length > 0
+      
+      if (!hasStats) {
+        console.log(`⚠️  Player ${currentPlayer.playerName} has no stats, fetching dynamic stats...`)
+        fetchDynamicStats(currentPlayer.id)
+      } else {
+        console.log(`✅ Player ${currentPlayer.playerName} already has stats`)
+        setDynamicStats(null) // Clear dynamic stats if player already has stats
+      }
+    } else {
+      setDynamicStats(null)
+    }
+  }, [currentPlayer?.id])
+
+  const fetchBidHistory = async (playerId: string) => {
+    try {
+      const response = await api.auction.getPlayerBidHistory(params.id as string, playerId)
+      setBidHistory(response.data || [])
+    } catch (error) {
+      console.error('Failed to fetch bid history:', error)
+      setBidHistory([])
+    }
+  }
 
   const fetchAuctionData = async () => {
     try {
+      // Fetch tournament details (includes bidTimer and pause state)
+      const tournamentRes = await api.tournaments.getDetails(params.id as string)
+      setTournament(tournamentRes.data)
+      
+      // Update pause state
+      setIsPaused(tournamentRes.data.isPaused || false)
+      setPausedBy(tournamentRes.data.pausedBy || null)
+      setPausedByName(tournamentRes.data.pausedByName || '')
+
       // Fetch all players
       const playersRes = await api.auction.getPlayers(params.id as string)
       
@@ -142,6 +205,94 @@ export default function AuctionPage() {
         variant: 'destructive'
       })
       setIsLoading(false)
+    }
+  }
+
+  // Fetch dynamic stats for a player (on-demand)
+  const fetchDynamicStats = async (playerId: string) => {
+    try {
+      console.log(`🔍 [Dynamic Stats] Fetching stats for player: ${playerId}`)
+      setIsLoadingStats(true)
+      setDynamicStats(null) // Clear previous stats
+      
+      const response = await api.auction.getDynamicPlayerStats(params.id as string, playerId)
+      
+      if (response.success && response.data) {
+        console.log(`✅ [Dynamic Stats] Got stats from ${response.data.source}:`, response.data)
+        setDynamicStats(response.data)
+      } else {
+        console.log(`⚠️  [Dynamic Stats] No stats available`)
+        setDynamicStats(null)
+      }
+    } catch (error: any) {
+      console.error('❌ [Dynamic Stats] Failed to fetch:', error)
+      setDynamicStats(null)
+    } finally {
+      setIsLoadingStats(false)
+    }
+  }
+
+  // Pause the auction
+  const handlePauseAuction = async () => {
+    try {
+      setIsPauseActionLoading(true)
+      console.log('⏸️  Pausing auction...')
+      
+      const response = await api.auction.pauseAuction(params.id as string)
+      
+      if (response.success) {
+        setIsPaused(true)
+        setPausedBy(response.data.pausedBy)
+        setPausedByName(response.data.pausedByName)
+        
+        toast({
+          title: '⏸️  Auction Paused',
+          description: `Auction paused by ${response.data.pausedByName}`,
+        })
+        
+        console.log('✅ Auction paused successfully')
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to pause auction:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to pause auction',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsPauseActionLoading(false)
+    }
+  }
+
+  // Unpause the auction
+  const handleUnpauseAuction = async () => {
+    try {
+      setIsPauseActionLoading(true)
+      console.log('▶️  Unpausing auction...')
+      
+      const response = await api.auction.unpauseAuction(params.id as string)
+      
+      if (response.success) {
+        setIsPaused(false)
+        setPausedBy(null)
+        setPausedByName('')
+        
+        toast({
+          title: '▶️  Auction Resumed',
+          description: 'Auction has been resumed',
+        })
+        
+        console.log('✅ Auction resumed successfully')
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to unpause auction:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to unpause auction',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsPauseActionLoading(false)
     }
   }
 
@@ -251,7 +402,12 @@ export default function AuctionPage() {
         description: `You bid ${formatCurrency(bidInPaise)}`,
       })
       setBidAmount('')
-      fetchAuctionData()
+      
+      // Refresh auction data and bid history
+      await fetchAuctionData()
+      if (currentPlayer?.id) {
+        await fetchBidHistory(currentPlayer.id)
+      }
     } catch (error: any) {
       toast({
         title: 'Bid failed',
@@ -260,6 +416,25 @@ export default function AuctionPage() {
       })
     } finally {
       setIsBidding(false)
+    }
+  }
+
+  const handleRebid = async (playerId: string, playerName: string) => {
+    try {
+      await api.auction.rebidPlayer(params.id as string, playerId)
+      
+      toast({
+        title: 'Player back in auction!',
+        description: `${playerName} is now available for bidding`,
+      })
+      
+      await fetchAuctionData()
+    } catch (error: any) {
+      toast({
+        title: 'Failed to re-bid',
+        description: error.message || 'Please try again',
+        variant: 'destructive'
+      })
     }
   }
 
@@ -308,9 +483,33 @@ export default function AuctionPage() {
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Left - Current Player Auction */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Gavel className="h-6 w-6 text-primary" />
-              <h2 className="text-3xl font-bold">Live Auction</h2>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Gavel className="h-6 w-6 text-primary" />
+                <h2 className="text-3xl font-bold">Live Auction</h2>
+                {isPaused && (
+                  <Badge className="ml-3 text-sm px-3 py-1 bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
+                    ⏸️ PAUSED
+                  </Badge>
+                )}
+              </div>
+              
+              {/* Pause/Unpause Button */}
+              <Button
+                onClick={isPaused ? handleUnpauseAuction : handlePauseAuction}
+                variant={isPaused ? "default" : "outline"}
+                size="sm"
+                disabled={isPauseActionLoading}
+                className={isPaused ? "bg-green-600 hover:bg-green-700" : ""}
+              >
+                {isPauseActionLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : isPaused ? (
+                  <>▶️ Resume Auction</>
+                ) : (
+                  <>⏸️ Pause Auction</>
+                )}
+              </Button>
             </div>
 
             {currentPlayer ? (
@@ -345,30 +544,69 @@ export default function AuctionPage() {
                       <TabsTrigger value="venue">Home/Away</TabsTrigger>
                     </TabsList>
                     <TabsContent value="overall" className="space-y-3 mt-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        {currentPlayer.overallStats ? (
-                          <>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Matches</p>
-                              <p className="text-2xl font-bold">{currentPlayer.overallStats.batting?.matches || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Runs</p>
-                              <p className="text-2xl font-bold text-primary">{currentPlayer.overallStats.batting?.runs || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Average</p>
-                              <p className="text-2xl font-bold">{currentPlayer.overallStats.batting?.average || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Wickets</p>
-                              <p className="text-2xl font-bold text-secondary">{currentPlayer.overallStats.bowling?.wickets || 0}</p>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="col-span-2 text-center text-muted-foreground py-4">No stats available</p>
-                        )}
-                      </div>
+                      {/* Dynamic Stats Banner */}
+                      {dynamicStats && dynamicStats.source === 'dynamic' && (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30 mb-3">
+                          <TrendingUp className="h-4 w-4 text-primary" />
+                          <p className="text-sm font-medium text-primary">
+                            Live {dynamicStats.format} Stats Loaded
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Loading Stats */}
+                      {isLoadingStats && (
+                        <div className="flex items-center justify-center gap-2 py-8">
+                          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                          <p className="text-sm text-muted-foreground">Loading player stats...</p>
+                        </div>
+                      )}
+
+                      {/* Display Stats */}
+                      {!isLoadingStats && (
+                        <div className="grid grid-cols-2 gap-3">
+                          {(currentPlayer.overallStats && Object.keys(currentPlayer.overallStats).length > 0) || dynamicStats ? (
+                            <>
+                              {/* Use dynamic stats if available, otherwise use existing stats */}
+                              {(() => {
+                                const stats = dynamicStats?.stats || currentPlayer.overallStats
+                                return (
+                                  <>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Matches</p>
+                                      <p className="text-2xl font-bold">{stats.batting?.matches || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Runs</p>
+                                      <p className="text-2xl font-bold text-primary">{stats.batting?.runs || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Average</p>
+                                      <p className="text-2xl font-bold">{stats.batting?.average?.toFixed(2) || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Strike Rate</p>
+                                      <p className="text-2xl font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Centuries</p>
+                                      <p className="text-2xl font-bold text-primary">{stats.batting?.centuries || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                      <p className="text-sm text-muted-foreground mb-1">Wickets</p>
+                                      <p className="text-2xl font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
+                                    </div>
+                                  </>
+                                )
+                              })()}
+                            </>
+                          ) : (
+                            <p className="col-span-2 text-center text-muted-foreground py-4">
+                              No stats available
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </TabsContent>
                     <TabsContent value="opposition" className="space-y-3 mt-4">
                       <div className="grid grid-cols-2 gap-3">
@@ -417,27 +655,50 @@ export default function AuctionPage() {
                   </Tabs>
 
                   {/* Timer */}
-                  <div className="mb-4 p-4 rounded-lg bg-gradient-to-r from-game-warning/20 to-game-danger/20 border-2 border-game-warning/30">
-                    <div className="flex items-center justify-center gap-3">
-                      <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                        timeRemaining <= 10 
-                          ? 'bg-game-danger/20 border-4 border-game-danger animate-pulse' 
-                          : 'bg-game-warning/20 border-4 border-game-warning'
-                      }`}>
-                        <span className={`text-3xl font-bold ${
-                          timeRemaining <= 10 ? 'text-game-danger' : 'text-game-warning'
-                        }`}>
-                          {timeRemaining}
-                        </span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-muted-foreground">Time Remaining</p>
-                        <p className="text-xs text-muted-foreground">
-                          {timeRemaining <= 10 ? 'Hurry up! Auction closing soon!' : 'Place your bid now'}
-                        </p>
+                  {/* Paused Banner */}
+                  {isPaused && (
+                    <div className="mb-4 p-4 rounded-lg bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-2 border-yellow-500/50">
+                      <div className="flex items-center justify-center gap-3">
+                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-yellow-500/20 border-4 border-yellow-500">
+                          <span className="text-3xl">⏸️</span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-yellow-600">Auction Paused</p>
+                          <p className="text-xs text-muted-foreground">
+                            {pausedBy === currentUser?.id 
+                              ? 'You paused the auction. Click Resume to continue.' 
+                              : `Paused by ${pausedByName || 'another user'}. Waiting to resume...`
+                            }
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* Timer */}
+                  {!isPaused && (
+                    <div className="mb-4 p-4 rounded-lg bg-gradient-to-r from-game-warning/20 to-game-danger/20 border-2 border-game-warning/30">
+                      <div className="flex items-center justify-center gap-3">
+                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                          timeRemaining <= 10 
+                            ? 'bg-game-danger/20 border-4 border-game-danger animate-pulse' 
+                            : 'bg-game-warning/20 border-4 border-game-warning'
+                        }`}>
+                          <span className={`text-3xl font-bold ${
+                            timeRemaining <= 10 ? 'text-game-danger' : 'text-game-warning'
+                          }`}>
+                            {timeRemaining}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-muted-foreground">Time Remaining</p>
+                          <p className="text-xs text-muted-foreground">
+                            {timeRemaining <= 10 ? 'Hurry up! Auction closing soon!' : 'Place your bid now'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Current Bid */}
                   <div className="p-6 rounded-xl bg-gradient-to-r from-primary/10 to-secondary/10 border-2 border-primary/20">
@@ -458,17 +719,23 @@ export default function AuctionPage() {
                     <div className="flex gap-3">
                       <Input
                         type="number"
-                        placeholder="Enter bid (Cr)"
+                        placeholder={isPaused ? "Auction Paused" : "Enter bid (Cr)"}
                         value={bidAmount}
                         onChange={(e) => setBidAmount(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !isBidding && !isPaused) {
+                            handlePlaceBid()
+                          }
+                        }}
                         className="h-12 text-base"
                         step="0.1"
+                        disabled={isPaused}
                       />
                       <Button
                         onClick={handlePlaceBid}
                         size="lg"
                         className="px-8 font-bold bg-primary hover:bg-primary/90"
-                        disabled={isBidding}
+                        disabled={isBidding || isPaused}
                       >
                         {isBidding ? (
                           <>
@@ -489,7 +756,7 @@ export default function AuctionPage() {
                   </div>
                 </CardContent>
               </Card>
-            ) : (
+            ) : players.length > 0 ? (
               <Card className="border-2 border-game-success/20 bg-gradient-to-br from-game-success/5 to-primary/5">
                 <CardContent className="flex flex-col items-center justify-center py-16">
                   <div className="w-20 h-20 rounded-full bg-game-success/10 flex items-center justify-center mb-6">
@@ -513,6 +780,13 @@ export default function AuctionPage() {
                       </Button>
                     </Link>
                   </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border-2">
+                <CardContent className="flex flex-col items-center justify-center py-16">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p className="text-muted-foreground">Loading auction data...</p>
                 </CardContent>
               </Card>
             )}
@@ -542,6 +816,62 @@ export default function AuctionPage() {
                       </div>
                     ))}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Unsold Players - Players with No Bids */}
+            {unsoldPlayers.length > 0 && (
+              <Card className="border-2 border-orange-500/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-orange-500" />
+                    Unsold Players ({unsoldPlayers.length})
+                  </CardTitle>
+                  <CardDescription>
+                    Players who received no bids
+                    {isAuctionComplete && ' - Click to bring back for re-bidding'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[300px] pr-4">
+                    <div className="space-y-2">
+                      {unsoldPlayers.map((player: any) => (
+                        <div
+                          key={player.id}
+                          className="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <p className="font-semibold text-sm">{player.playerName}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <p className="text-xs text-muted-foreground capitalize">{player.role}</p>
+                                <Badge variant="outline" className="text-xs">
+                                  Tier {player.tier}
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-muted-foreground">Base Price</p>
+                              <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">
+                                {formatCurrency(player.basePrice)}
+                              </p>
+                            </div>
+                          </div>
+                          {isAuctionComplete && (
+                            <Button
+                              size="sm"
+                              className="w-full mt-2 bg-orange-500 hover:bg-orange-600 text-white"
+                              onClick={() => handleRebid(player.id, player.playerName)}
+                            >
+                              <TrendingUp className="h-4 w-4 mr-1" />
+                              Bring Back for Re-Bid
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
                 </CardContent>
               </Card>
             )}
@@ -600,6 +930,102 @@ export default function AuctionPage() {
                         <p className="text-xs text-muted-foreground mt-1">Start bidding to build your team!</p>
                       </div>
                     )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+
+            {/* Live Bidding History */}
+            {currentPlayer && (
+              <Card className="border-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Gavel className="h-5 w-5 text-primary" />
+                    Live Bidding
+                  </CardTitle>
+                  <CardDescription>
+                    Bid history for {currentPlayer.playerName}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[250px] pr-4">
+                    <div className="space-y-2">
+                      {bidHistory.length > 0 ? (
+                        bidHistory.map((bid: any, index: number) => (
+                          <div
+                            key={bid.id}
+                            className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-r from-primary/5 to-secondary/5 border border-border/50"
+                          >
+                            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                              <span className="text-sm font-bold text-primary">
+                                {bid.user?.name?.charAt(0).toUpperCase() || '?'}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm truncate">{bid.user?.name || 'Unknown'}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(bid.timestamp).toLocaleTimeString('en-US', { 
+                                  hour: '2-digit', 
+                                  minute: '2-digit',
+                                  second: '2-digit'
+                                })}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-bold text-primary">{formatCurrency(bid.amount)}</p>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-8">
+                          <Gavel className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground">No bids yet</p>
+                          <p className="text-xs text-muted-foreground mt-1">Be the first to bid!</p>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Teams Wallet Balance */}
+            <Card className="border-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Wallet className="h-5 w-5 text-secondary" />
+                  Teams Purse
+                </CardTitle>
+                <CardDescription>
+                  Remaining wallet balance of all participants
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[200px] pr-4">
+                  <div className="space-y-2">
+                    {allTeams.map((team: any) => (
+                      <div
+                        key={team.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-secondary/5 to-accent/5 border border-border/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full bg-secondary/20 flex items-center justify-center">
+                            <span className="text-sm font-bold text-secondary">
+                              {team.user?.name?.charAt(0).toUpperCase() || '?'}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm">{team.user?.name || 'Unknown'}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {team.players?.length || 0} players
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-secondary">{formatCurrency(team.walletBalance || 0)}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </ScrollArea>
               </CardContent>

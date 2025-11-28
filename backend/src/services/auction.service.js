@@ -57,6 +57,144 @@ const auctionService = {
   },
 
   /**
+   * Calculate player tier from real statistics (RapidAPI data)
+   * Uses format-specific thresholds for accurate tier assignment
+   */
+  calculatePlayerTierFromStats(stats, format = 'ODI') {
+    if (!stats || !stats.batting || !stats.bowling) {
+      return 'D';
+    }
+
+    const batting = stats.batting;
+    const bowling = stats.bowling;
+
+    // Determine player type based on stats
+    const isBatsman = batting.matches > 0 && (bowling.wickets === 0 || batting.runs > bowling.wickets * 30);
+    const isBowler = bowling.wickets > 0 && !isBatsman;
+    const isAllRounder = batting.runs > 1000 && bowling.wickets > 50;
+
+    // Format-specific thresholds
+    const thresholds = this.getFormatThresholds(format);
+
+    // Tier calculation for batsmen
+    if (isBatsman) {
+      const avg = batting.average || 0;
+      const runs = batting.runs || 0;
+      const strikeRate = batting.strikeRate || 0;
+      
+      // For T20, strike rate is crucial
+      if (format === 'T20' || format === 'T20I') {
+        if (avg > thresholds.batsman.A.avg && strikeRate > thresholds.batsman.A.sr && runs > thresholds.batsman.A.runs) return 'A';
+        if (avg > thresholds.batsman.B.avg && strikeRate > thresholds.batsman.B.sr && runs > thresholds.batsman.B.runs) return 'B';
+        if (avg > thresholds.batsman.C.avg && runs > thresholds.batsman.C.runs) return 'C';
+      } else {
+        // For ODI/Test, average and total runs matter more
+        if (avg > thresholds.batsman.A.avg && runs > thresholds.batsman.A.runs) return 'A';
+        if (avg > thresholds.batsman.B.avg && runs > thresholds.batsman.B.runs) return 'B';
+        if (avg > thresholds.batsman.C.avg && runs > thresholds.batsman.C.runs) return 'C';
+      }
+      return 'D';
+    }
+
+    // Tier calculation for bowlers
+    if (isBowler) {
+      const avg = bowling.average || 999;
+      const wickets = bowling.wickets || 0;
+      const economy = bowling.economy || 999;
+      
+      // For T20, economy is crucial
+      if (format === 'T20' || format === 'T20I') {
+        if (wickets > thresholds.bowler.A.wickets && economy < thresholds.bowler.A.economy) return 'A';
+        if (wickets > thresholds.bowler.B.wickets && economy < thresholds.bowler.B.economy) return 'B';
+        if (wickets > thresholds.bowler.C.wickets && economy < thresholds.bowler.C.economy) return 'C';
+      } else {
+        // For ODI/Test, average and wickets matter more
+        if (avg < thresholds.bowler.A.avg && wickets > thresholds.bowler.A.wickets) return 'A';
+        if (avg < thresholds.bowler.B.avg && wickets > thresholds.bowler.B.wickets) return 'B';
+        if (avg < thresholds.bowler.C.avg && wickets > thresholds.bowler.C.wickets) return 'C';
+      }
+      return 'D';
+    }
+
+    // Tier calculation for all-rounders
+    if (isAllRounder) {
+      const batAvg = batting.average || 0;
+      const wickets = bowling.wickets || 0;
+      
+      if (batAvg > thresholds.allrounder.A.avg && wickets > thresholds.allrounder.A.wickets) return 'A';
+      if (batAvg > thresholds.allrounder.B.avg && wickets > thresholds.allrounder.B.wickets) return 'B';
+      if (batAvg > thresholds.allrounder.C.avg && wickets > thresholds.allrounder.C.wickets) return 'C';
+      return 'D';
+    }
+
+    return 'D';
+  },
+
+  /**
+   * Get format-specific thresholds for tier calculation
+   */
+  getFormatThresholds(format) {
+    const normalized = (format || 'ODI').toUpperCase();
+    
+    if (normalized === 'T20' || normalized === 'T20I') {
+      return {
+        batsman: {
+          A: { avg: 30, sr: 140, runs: 2000 },
+          B: { avg: 25, sr: 130, runs: 1000 },
+          C: { avg: 20, sr: 120, runs: 500 }
+        },
+        bowler: {
+          A: { wickets: 100, economy: 7.5, avg: 25 },
+          B: { wickets: 50, economy: 8.0, avg: 28 },
+          C: { wickets: 25, economy: 9.0, avg: 32 }
+        },
+        allrounder: {
+          A: { avg: 25, wickets: 80 },
+          B: { avg: 22, wickets: 50 },
+          C: { avg: 18, wickets: 30 }
+        }
+      };
+    } else if (normalized === 'TEST') {
+      return {
+        batsman: {
+          A: { avg: 50, runs: 5000 },
+          B: { avg: 40, runs: 3000 },
+          C: { avg: 30, runs: 1500 }
+        },
+        bowler: {
+          A: { wickets: 200, avg: 28 },
+          B: { wickets: 100, avg: 32 },
+          C: { wickets: 50, avg: 38 }
+        },
+        allrounder: {
+          A: { avg: 35, wickets: 150 },
+          B: { avg: 28, wickets: 80 },
+          C: { avg: 22, wickets: 40 }
+        }
+      };
+    } else {
+      // ODI (default)
+      return {
+        batsman: {
+          A: { avg: 45, runs: 4000 },
+          B: { avg: 35, runs: 2500 },
+          C: { avg: 28, runs: 1200 }
+        },
+        bowler: {
+          A: { wickets: 150, avg: 28 },
+          B: { wickets: 80, avg: 32 },
+          C: { wickets: 40, avg: 36 }
+        },
+        allrounder: {
+          A: { avg: 35, wickets: 120 },
+          B: { avg: 28, wickets: 60 },
+          C: { avg: 22, wickets: 35 }
+        }
+      };
+    }
+  },
+
+  /**
    * Generate auction players for a tournament
    */
   async generateAuctionPlayers(tournament) {
@@ -80,40 +218,104 @@ const auctionService = {
       
       const allPlayers = [];
 
-      // Get players from both teams using cricket API
-      for (const team of teams) {
-        console.log(`🔍 Fetching squad for team: ${team}`);
+      // Fetch all squads for the selected format
+      console.log(`🔍 Fetching ${tournament.format} squads for series ${seriesData.id} (${seriesData.name})...`);
+      
+      try {
+        const squadPlayers = await cricketApiService.getAllSquads(seriesData.id, tournament.format);
+        console.log(`✅ Found ${squadPlayers.length} total players across all teams`);
         
-        try {
-          // Fetch squad from cricket API
-          const squadPlayers = await cricketApiService.getSquad(seriesData.apiSeriesId, team);
-          console.log(`✅ Found ${squadPlayers.length} players for ${team}`);
-          
-          for (const player of squadPlayers) {
-            // Calculate tier based on stats
-            const tier = this.calculatePlayerTier(player);
+        if (squadPlayers.length > 0) {
+          console.log('🔍 FIRST PLAYER KEYS:', Object.keys(squadPlayers[0]));
+          console.log('🔍 FIRST PLAYER apiPlayerId:', squadPlayers[0].apiPlayerId);
+          console.log('🔍 FIRST PLAYER id:', squadPlayers[0].id);
+          console.log('🔍 FIRST PLAYER name:', squadPlayers[0].name);
+          console.log('🔍 FIRST PLAYER team:', squadPlayers[0].team);
+        }
+        
+        if (squadPlayers.length === 0) {
+          console.warn(`⚠️ No squad data available for series ${seriesData.name}`);
+          console.warn(`⚠️ This may be because:`);
+          console.warn(`   - Series squads haven't been announced yet`);
+          console.warn(`   - Series is too far in the future`);
+          console.warn(`   - API doesn't have squad data for this series type`);
+          throw new Error(`No squad data available for this series. Squads may not be announced yet.`);
+        }
+        
+        for (const player of squadPlayers) {
+          try {
+            // Fetch real player statistics from RapidAPI (pass role, team, and format for accurate stats)
+            console.log(`📊 Fetching ${tournament.format} stats for: ${player.name}`);
+            const playerStats = await cricketApiService.getPlayerStats(
+              player.name, 
+              player.role, 
+              player.team,
+              tournament.format  // Pass tournament format (T20/ODI/Test)
+            );
+            
+            if (playerStats) {
+              console.log(`   ✅ Got ${tournament.format} stats for ${player.name}`);
+            } else {
+              console.log(`   ⚠️  No stats for ${player.name} - using default tier`);
+            }
+            
+            // Calculate tier based on format-specific stats
+            const tier = playerStats ? 
+              this.calculatePlayerTierFromStats(playerStats, tournament.format) : 
+              this.calculatePlayerTier(player);
             
             allPlayers.push({
               tournamentId: tournament.id,
-              playerId: player.apiPlayerId || player.id,
+              playerId: player.apiPlayerId || player.id || `${player.name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`,
               playerName: player.name,
               role: player.role,
+              team: player.team,
               tier: tier,
               basePrice: TIER_PRICES[tier],
-              overallStats: JSON.stringify(player.overallStats || {}),
+              overallStats: JSON.stringify(playerStats || player.overallStats || {}),
               vsOpponentStats: JSON.stringify({}) // Will be populated when match data is available
             });
+            
+            // Small delay to avoid rate limiting (only if fetching from API, not cache)
+            if (playerStats) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          } catch (playerError) {
+            console.warn(`⚠️  Error processing player ${player.name}:`, playerError.message);
+            // Add player with default tier if stats fetching fails
+            allPlayers.push({
+              tournamentId: tournament.id,
+              playerId: player.apiPlayerId || player.id || `${player.name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`,
+              playerName: player.name,
+              role: player.role,
+              team: player.team,
+              tier: 'D',
+              basePrice: TIER_PRICES['D'],
+              overallStats: JSON.stringify({}),
+              vsOpponentStats: JSON.stringify({})
+            });
           }
-        } catch (error) {
-          console.error(`❌ Error fetching squad for ${team}:`, error.message);
-          // Continue with next team instead of failing
         }
+      } catch (squadError) {
+        console.error(`❌ Error fetching squads:`, squadError.message);
+        throw new Error(`Failed to fetch player squads: ${squadError.message}`);
       }
 
       console.log(`📊 Total players to create: ${allPlayers.length}`);
-
-      if (allPlayers.length === 0) {
-        throw new Error('No players found for this series. Check if squads are available.');
+      
+      // Count how many got stats
+      const playersWithStats = allPlayers.filter(p => {
+        try {
+          const stats = JSON.parse(p.overallStats);
+          return stats.batting && stats.batting.runs > 0;
+        } catch {
+          return false;
+        }
+      });
+      
+      console.log(`📊 Players with career stats: ${playersWithStats.length}/${allPlayers.length}`);
+      if (playersWithStats.length < allPlayers.length) {
+        console.log(`⚠️  ${allPlayers.length - playersWithStats.length} players without stats (quota/API limits)`);
       }
 
       // Create auction players

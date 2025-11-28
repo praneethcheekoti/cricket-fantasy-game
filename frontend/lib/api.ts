@@ -16,8 +16,14 @@ const getAuthToken = (): string | null => {
 // Helper function to handle API responses
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }))
-    throw new Error(error.error || error.message || 'An error occurred')
+    const errorData = await response.json().catch(() => ({ error: response.statusText }))
+    // Create error with response data attached
+    const error: any = new Error(errorData.error || errorData.message || 'An error occurred')
+    error.response = {
+      status: response.status,
+      data: errorData
+    }
+    throw error
   }
   return response.json()
 }
@@ -84,7 +90,22 @@ export const api = {
 
   // ==================== TOURNAMENTS ====================
   tournaments: {
-    create: async (data: { name: string; seriesId: string; scoringRules?: any }) => {
+    getSeriesFormats: async (seriesId: string) => {
+      const response = await fetch(`${API_URL}/tournaments/series/${seriesId}/formats`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      })
+      return handleResponse<{
+        success: boolean
+        data: Array<{
+          format: string
+          available: boolean
+          squadCount: number
+          teams: string[]
+        }>
+      }>(response)
+    },
+
+    create: async (data: { name: string; seriesId: string; format: string; scoringRules?: any; bidTimer?: number }) => {
       const response = await fetch(`${API_URL}/tournaments`, {
         method: 'POST',
         headers: {
@@ -100,6 +121,7 @@ export const api = {
           name: string
           code: string
           seriesId: string
+          format: string
         }
         message: string
       }>(response)
@@ -137,6 +159,16 @@ export const api = {
       return handleResponse<{
         success: boolean
         data: Array<any>
+      }>(response)
+    },
+
+    getDetails: async (id: string) => {
+      const response = await fetch(`${API_URL}/tournaments/${id}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      })
+      return handleResponse<{
+        success: boolean
+        data: any
       }>(response)
     },
 
@@ -236,6 +268,68 @@ export const api = {
       }>(response)
     },
 
+    getPlayerBidHistory: async (tournamentId: string, playerId: string) => {
+      const response = await fetch(`${API_URL}/auction/${tournamentId}/player/${playerId}/bids`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      })
+      return handleResponse<{
+        success: boolean
+        data: Array<any>
+      }>(response)
+    },
+
+    getDynamicPlayerStats: async (tournamentId: string, playerId: string) => {
+      const response = await fetch(`${API_URL}/auction/${tournamentId}/player/${playerId}/dynamic-stats`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      })
+      return handleResponse<{
+        success: boolean
+        data: {
+          playerName: string
+          role: string
+          team: string
+          format: string
+          stats: any
+          source: string
+        }
+      }>(response)
+    },
+
+    pauseAuction: async (tournamentId: string) => {
+      const response = await fetch(`${API_URL}/auction/${tournamentId}/pause`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      return handleResponse<{
+        success: boolean
+        data: {
+          isPaused: boolean
+          pausedBy: string
+          pausedByName: string
+          pausedAt: string
+        }
+      }>(response)
+    },
+
+    unpauseAuction: async (tournamentId: string) => {
+      const response = await fetch(`${API_URL}/auction/${tournamentId}/unpause`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      return handleResponse<{
+        success: boolean
+        data: {
+          isPaused: boolean
+        }
+      }>(response)
+    },
+
     getMyTeam: async (tournamentId: string) => {
       const response = await fetch(`${API_URL}/auction/${tournamentId}/my-team`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
@@ -264,6 +358,17 @@ export const api = {
 
     completePlayerAuction: async (tournamentId: string, playerId: string) => {
       const response = await fetch(`${API_URL}/auction/${tournamentId}/complete/${playerId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      return handleResponse(response)
+    },
+
+    rebidPlayer: async (tournamentId: string, playerId: string) => {
+      const response = await fetch(`${API_URL}/auction/${tournamentId}/rebid/${playerId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

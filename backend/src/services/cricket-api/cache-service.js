@@ -265,6 +265,32 @@ class CacheService {
     }
   }
 
+  async getPlayerByName(playerName) {
+    try {
+      const cached = await prisma.playerCache.findFirst({
+        where: { name: playerName }
+      });
+
+      if (!cached) {
+        console.log(`[Cache] ❌ Player ${playerName} - MISS`);
+        return null;
+      }
+
+      if (this.isExpired(cached.expiresAt)) {
+        console.log(`[Cache] ⏰ Player ${playerName} - EXPIRED`);
+        await this.deletePlayerCache(cached.apiPlayerId);
+        return null;
+      }
+
+      console.log(`[Cache] ✅ Player ${playerName} - HIT (cached stats)`);
+      await this.recordCacheHit();
+      return this.parsePlayerCache(cached);
+    } catch (error) {
+      console.error('[Cache] Error getting player by name:', error);
+      return null;
+    }
+  }
+
   async savePlayerCache(playerData, apiSource) {
     try {
       const ttl = this.TTL.player;

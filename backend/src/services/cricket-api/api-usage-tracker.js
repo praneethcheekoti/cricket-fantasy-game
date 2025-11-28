@@ -8,6 +8,7 @@ const prisma = new PrismaClient();
  */
 class ApiUsageTracker {
   constructor() {
+    this.initialized = false;
     this.providers = {
       cricapi: {
         name: 'CricAPI',
@@ -28,6 +29,11 @@ class ApiUsageTracker {
         name: 'CricketData',
         dailyLimit: 50,
         isEnabled: true
+      },
+      unofficial: {
+        name: 'Unofficial Cricbuzz',
+        dailyLimit: 16, // 500/month ≈ 16/day (same RapidAPI key)
+        isEnabled: true
       }
     };
   }
@@ -37,24 +43,27 @@ class ApiUsageTracker {
    */
   async initialize() {
     try {
-      for (const [key, config] of Object.entries(this.providers)) {
-        await prisma.apiUsageTracker.upsert({
-          where: { apiName: key },
-          update: {
-            dailyLimit: config.dailyLimit,
-            isActive: config.isEnabled
-          },
-          create: {
-            apiName: key,
-            callsToday: 0,
-            dailyLimit: config.dailyLimit,
-            isActive: config.isEnabled,
-            lastResetAt: new Date(),
-            errorCount: 0
-          }
-        });
+      if (!this.initialized) {
+        for (const [key, config] of Object.entries(this.providers)) {
+          await prisma.apiUsageTracker.upsert({
+            where: { apiName: key },
+            update: {
+              dailyLimit: config.dailyLimit,
+              isActive: config.isEnabled
+            },
+            create: {
+              apiName: key,
+              callsToday: 0,
+              dailyLimit: config.dailyLimit,
+              isActive: config.isEnabled,
+              lastResetAt: new Date(),
+              errorCount: 0
+            }
+          });
+        }
+        this.initialized = true;
+        console.log('[API Usage] ✅ Trackers initialized');
       }
-      console.log('[API Usage] ✅ Trackers initialized');
     } catch (error) {
       console.error('[API Usage] ❌ Initialization failed:', error.message);
     }
@@ -70,7 +79,7 @@ class ApiUsageTracker {
       });
 
       if (!tracker) {
-        console.log(`[API Usage] No tracker found for ${apiName}, creating...`);
+        // Silently initialize missing tracker
         await this.initialize();
         return this.getUsage(apiName);
       }
@@ -108,8 +117,8 @@ class ApiUsageTracker {
     const remaining = tracker.dailyLimit - tracker.callsToday;
     console.log(`[API Usage] ${apiName}: ${tracker.callsToday}/${tracker.dailyLimit} (${remaining} remaining)`);
     
-    // Keep a buffer of 5 calls
-    return remaining > 5;
+    // Allow calls until actually exhausted (no buffer for player stats)
+    return remaining > 0;
   }
 
   /**

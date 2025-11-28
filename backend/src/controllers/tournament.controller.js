@@ -4,20 +4,41 @@ const { getDefaultScoringRules, generateTournamentCode } = require('../utils/tou
 const auctionService = require('../services/auction.service');
 const { calculateLeaderboard } = require('../services/scoring.service');
 const leaderboardService = require('../services/leaderboard.service');
+const cricketApiService = require('../services/cricket-api');
 
 const prisma = new PrismaClient();
 
 const tournamentController = {
   async createTournament(req, res) {
     try {
-      const { name, seriesId, scoringRules } = req.body;
+      const { name, seriesId, format, scoringRules, bidTimer } = req.body;
       const userId = req.userId;
+
+      // Validate format
+      if (!format || !['Test', 'ODI', 'T20'].includes(format)) {
+        return res.status(400).json({ error: 'Invalid format. Must be Test, ODI, or T20' });
+      }
 
       // Validate series exists (now in SeriesCache)
       const series = await prisma.seriesCache.findUnique({ where: { id: seriesId } });
       if (!series) {
         return res.status(404).json({ error: 'Series not found' });
       }
+
+      // Check if squad data is available for this series format
+      console.log(`🔍 Checking ${format} squad availability for series: ${series.name}`);
+      const squadCheck = await cricketApiService.checkSquadAvailability(seriesId, format);
+      
+      if (!squadCheck.available) {
+        console.log(`❌ ${format} squad not available for series: ${series.name}`);
+        return res.status(400).json({ 
+          error: 'Squad data not available',
+          message: squadCheck.message,
+          details: `${format} squad data is not yet available for this series. Please try a different format or series.`
+        });
+      }
+
+      console.log(`✅ ${format} squad available: ${squadCheck.playerCount} players found`);
 
       // Generate unique tournament code
       const code = generateTournamentCode();
@@ -31,7 +52,9 @@ const tournamentController = {
           name,
           code,
           seriesId,
+          format, // Store selected format
           creatorId: userId,
+          bidTimer: bidTimer || 30, // Default to 30 seconds if not provided
           battingRules: JSON.stringify(rules.batting),
           bowlingRules: JSON.stringify(rules.bowling),
           fieldingRules: JSON.stringify(rules.fielding),
@@ -134,6 +157,43 @@ const tournamentController = {
     }
   },
 
+  async getSeriesFormats(req, res) {
+    try {
+      const { seriesId } = req.params;
+      
+      console.log(`🔍 Fetching formats for series: ${seriesId}`);
+      
+      // Fetch available formats for this series
+      const formats = await cricketApiService.getSeriesFormats(seriesId);
+      
+      console.log(`📊 [Controller] Formats received from service:`, JSON.stringify(formats, null, 2));
+      
+      if (!formats || formats.length === 0) {
+        console.log('❌ No formats available');
+        return res.status(404).json({ 
+          success: false,
+          error: 'No formats available',
+          message: 'Squad data not yet released for this series'
+        });
+      }
+      
+      console.log(`✅ Returning ${formats.length} formats to frontend: ${formats.map(f => f.format).join(', ')}`);
+      
+      res.json({
+        success: true,
+        data: formats
+      });
+    } catch (error) {
+      console.error('❌ Error fetching series formats:', error);
+      console.error('Stack:', error.stack);
+      res.status(500).json({ 
+        success: false,
+        error: 'Failed to fetch formats',
+        message: error.message
+      });
+    }
+  },
+
   async getTournamentDetails(req, res) {
     try {
       const { id } = req.params;
@@ -178,10 +238,21 @@ const tournamentController = {
         return res.status(403).json({ error: 'Access denied' });
       }
 
+      // Get pauser name if auction is paused
+      let pausedByName = null;
+      if (tournament.isPaused && tournament.pausedBy) {
+        const pauser = await prisma.user.findUnique({
+          where: { id: tournament.pausedBy },
+          select: { name: true }
+        });
+        pausedByName = pauser?.name || 'Unknown';
+      }
+
       res.json({
         success: true,
         data: {
           ...tournament,
+          pausedByName, // Add pauser name to response
           series: tournament.series ? {
             ...tournament.series,
             teams: typeof tournament.series.teams === 'string'

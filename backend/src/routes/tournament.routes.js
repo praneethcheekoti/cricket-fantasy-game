@@ -6,6 +6,7 @@ const authMiddleware = require('../middleware/auth.middleware');
 router.post('/', authMiddleware, tournamentController.createTournament);
 router.post('/join', authMiddleware, tournamentController.joinTournament); // Fixed: accepts code in body
 router.get('/user/list', authMiddleware, tournamentController.getUserTournaments); // Moved before /:id
+router.get('/series/:seriesId/formats', authMiddleware, tournamentController.getSeriesFormats); // Get available formats for a series
 router.get('/:id', authMiddleware, tournamentController.getTournamentDetails);
 router.put('/:id/rules', authMiddleware, tournamentController.updateRules);
 router.post('/:id/lock-rules', authMiddleware, tournamentController.lockRules);

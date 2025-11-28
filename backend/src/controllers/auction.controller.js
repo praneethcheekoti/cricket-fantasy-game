@@ -123,6 +123,44 @@ const auctionController = {
     }
   },
 
+  async getPlayerBidHistory(req, res) {
+    try {
+      const { tournamentId, playerId } = req.params;
+
+      // Get all bids for this player (playerId is unique per tournament, so we don't need to filter by tournamentId)
+      const bids = await prisma.bid.findMany({
+        where: {
+          playerId
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          },
+          team: {
+            select: { 
+              id: true, 
+              name: true,
+              user: {
+                select: { name: true, email: true }
+              }
+            }
+          }
+        },
+        orderBy: {
+          timestamp: 'asc'
+        }
+      });
+
+      res.json({
+        success: true,
+        data: bids
+      });
+    } catch (error) {
+      console.error('❌ [BID HISTORY] Error fetching bid history:', error);
+      res.status(500).json({ error: 'Failed to fetch bid history' });
+    }
+  },
+
   async getMyTeam(req, res) {
     try {
       const { tournamentId } = req.params;
@@ -314,6 +352,53 @@ const auctionController = {
     }
   },
 
+  async rebidPlayer(req, res) {
+    try {
+      const { tournamentId, playerId } = req.params;
+
+      console.log(`🔄 Rebid request for player ${playerId} in tournament ${tournamentId}`);
+
+      // Get the player
+      const player = await prisma.auctionPlayer.findUnique({
+        where: { id: playerId }
+      });
+
+      if (!player) {
+        return res.status(404).json({ error: 'Player not found' });
+      }
+
+      // Only allow rebid for unsold players
+      if (player.status !== 'unsold') {
+        return res.status(400).json({ 
+          error: 'Only unsold players can be re-bid',
+          details: `Player status is ${player.status}` 
+        });
+      }
+
+      // Reset player to available status
+      await prisma.auctionPlayer.update({
+        where: { id: playerId },
+        data: {
+          status: 'available',
+          currentPrice: player.basePrice, // Reset to base price
+          soldTo: null
+        }
+      });
+
+      console.log(`✅ Player ${player.playerName} reset for re-bidding`);
+
+      res.json({
+        success: true,
+        message: `${player.playerName} is now available for bidding again`,
+        data: { playerId, playerName: player.playerName }
+      });
+
+    } catch (error) {
+      console.error('Error re-bidding player:', error);
+      res.status(500).json({ error: 'Failed to re-bid player' });
+    }
+  },
+
   async setCaptainViceCaptain(req, res) {
     try {
       const { tournamentId } = req.params;
@@ -454,6 +539,263 @@ const auctionController = {
     } catch (error) {
       console.error('❌ Error checking auction completion:', error);
       // Don't throw - this is a background check
+    }
+  },
+
+  /**
+   * Get dynamic player stats during auction (on-demand)
+   * Fetches stats from CrickkAPI if player has no stats
+   * Used to help bidders make informed decisions
+   */
+  async getDynamicPlayerStats(req, res) {
+    try {
+      const { tournamentId, playerId } = req.params;
+      
+      console.log(`🔍 [Dynamic Stats] Request for player ${playerId} in tournament ${tournamentId}`);
+
+      // Step 1: Get player from auction
+      const auctionPlayer = await prisma.auctionPlayer.findFirst({
+        where: {
+          id: playerId,
+          tournamentId: tournamentId
+        }
+      });
+
+      if (!auctionPlayer) {
+        return res.status(404).json({
+          success: false,
+          error: 'Player not found'
+        });
+      }
+
+      // Step 2: Check if player already has stats
+      const existingStats = JSON.parse(auctionPlayer.overallStats || '{}');
+      
+      if (existingStats && Object.keys(existingStats).length > 0) {
+        console.log(`✅ [Dynamic Stats] Player ${auctionPlayer.playerName} already has stats`);
+        return res.json({
+          success: true,
+          data: {
+            playerName: auctionPlayer.playerName,
+            stats: existingStats,
+            source: 'cached'
+          }
+        });
+      }
+
+      // Step 3: Get tournament format
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          error: 'Tournament not found'
+        });
+      }
+
+      // Get format from tournament (always use tournament.format as the source of truth)
+      const format = tournament.format || 'ODI'; // Default format
+      
+      console.log(`📊 [Dynamic Stats] Fetching ${format} stats for ${auctionPlayer.playerName}`);
+
+      // Step 4: Fetch stats from CrickkAPI
+      const CrickkApiProvider = require('../services/cricket-api/providers/crickkapi-provider');
+      const crickkApi = new CrickkApiProvider();
+
+      const stats = await crickkApi.fetchPlayerStatsByName(auctionPlayer.playerName, format);
+
+      if (!stats) {
+        console.log(`⚠️  [Dynamic Stats] No stats available for ${auctionPlayer.playerName}`);
+        return res.status(404).json({
+          success: false,
+          error: 'Stats not available for this player'
+        });
+      }
+
+      console.log(`✅ [Dynamic Stats] Retrieved ${format} stats for ${auctionPlayer.playerName}`);
+
+      // Step 5: Return stats (do NOT update tier or base price)
+      res.json({
+        success: true,
+        data: {
+          playerName: auctionPlayer.playerName,
+          role: auctionPlayer.role,
+          team: auctionPlayer.team,
+          format: format,
+          stats: stats,
+          source: 'dynamic'
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ [Dynamic Stats] Error fetching dynamic stats:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch dynamic stats'
+      });
+    }
+  },
+
+  /**
+   * Pause the auction
+   * Only a tournament participant can pause
+   */
+  async pauseAuction(req, res) {
+    try {
+      const { tournamentId } = req.params;
+      const userId = req.userId;
+
+      console.log(`⏸️  [Pause] Request to pause auction ${tournamentId} by user ${userId}`);
+
+      // Check if user is a participant
+      const participant = await prisma.tournamentParticipant.findFirst({
+        where: {
+          tournamentId: tournamentId,
+          userId: userId
+        }
+      });
+
+      if (!participant) {
+        return res.status(403).json({
+          success: false,
+          error: 'Only tournament participants can pause the auction'
+        });
+      }
+
+      // Check if tournament is in auction status
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          error: 'Tournament not found'
+        });
+      }
+
+      if (tournament.status !== 'auction') {
+        return res.status(400).json({
+          success: false,
+          error: 'Can only pause during active auction'
+        });
+      }
+
+      if (tournament.isPaused) {
+        return res.status(400).json({
+          success: false,
+          error: 'Auction is already paused'
+        });
+      }
+
+      // Pause the auction
+      const updatedTournament = await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: {
+          isPaused: true,
+          pausedBy: userId,
+          pausedAt: new Date()
+        }
+      });
+
+      // Get user info for response
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true }
+      });
+
+      console.log(`✅ [Pause] Auction paused by ${user?.name || 'Unknown'}`);
+
+      res.json({
+        success: true,
+        data: {
+          isPaused: true,
+          pausedBy: userId,
+          pausedByName: user?.name || 'Unknown',
+          pausedAt: updatedTournament.pausedAt
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ [Pause] Error pausing auction:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to pause auction'
+      });
+    }
+  },
+
+  /**
+   * Unpause the auction
+   * Only the user who paused can unpause
+   */
+  async unpauseAuction(req, res) {
+    try {
+      const { tournamentId } = req.params;
+      const userId = req.userId;
+
+      console.log(`▶️  [Unpause] Request to unpause auction ${tournamentId} by user ${userId}`);
+
+      // Get tournament
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          error: 'Tournament not found'
+        });
+      }
+
+      if (!tournament.isPaused) {
+        return res.status(400).json({
+          success: false,
+          error: 'Auction is not paused'
+        });
+      }
+
+      // Check if this user paused the auction
+      if (tournament.pausedBy !== userId) {
+        // Get pauser info
+        const pauser = await prisma.user.findUnique({
+          where: { id: tournament.pausedBy || '' },
+          select: { name: true }
+        });
+
+        return res.status(403).json({
+          success: false,
+          error: `Only ${pauser?.name || 'the user who paused'} can unpause the auction`
+        });
+      }
+
+      // Unpause the auction
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: {
+          isPaused: false,
+          pausedBy: null,
+          pausedAt: null
+        }
+      });
+
+      console.log(`✅ [Unpause] Auction resumed by user ${userId}`);
+
+      res.json({
+        success: true,
+        data: {
+          isPaused: false
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ [Unpause] Error unpausing auction:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to unpause auction'
+      });
     }
   }
 };

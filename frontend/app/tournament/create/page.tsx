@@ -21,7 +21,11 @@ export default function CreateTournamentPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingSeries, setIsLoadingSeries] = useState(true)
   const [series, setSeries] = useState<any[]>([])
+  const [isLoadingFormats, setIsLoadingFormats] = useState(false)
+  const [availableFormats, setAvailableFormats] = useState<any[]>([])
   const [showCodeDialog, setShowCodeDialog] = useState(false)
+  const [showSquadErrorDialog, setShowSquadErrorDialog] = useState(false)
+  const [squadErrorDetails, setSquadErrorDetails] = useState({ seriesName: '', message: '' })
   const [tournamentCode, setTournamentCode] = useState('')
   const [tournamentId, setTournamentId] = useState('')
   const [copied, setCopied] = useState(false)
@@ -29,6 +33,8 @@ export default function CreateTournamentPage() {
   const [formData, setFormData] = useState({
     name: '',
     seriesId: '',
+    format: '', // Selected format (Test/ODI/T20)
+    bidTimer: 30, // Default 30 seconds
     scoring: {
       batting: {
         run: 1,
@@ -88,6 +94,16 @@ export default function CreateTournamentPage() {
     fetchSeries()
   }, [])
 
+  // Fetch formats when series is selected
+  useEffect(() => {
+    if (formData.seriesId) {
+      fetchFormats(formData.seriesId)
+    } else {
+      setAvailableFormats([])
+      setFormData(prev => ({ ...prev, format: '' }))
+    }
+  }, [formData.seriesId])
+
   const fetchSeries = async () => {
     try {
       setIsLoadingSeries(true)
@@ -104,13 +120,52 @@ export default function CreateTournamentPage() {
     }
   }
 
+  const fetchFormats = async (seriesId: string) => {
+    try {
+      setIsLoadingFormats(true)
+      setAvailableFormats([])
+      console.log(`🔍 [Frontend] Fetching formats for series: ${seriesId}`)
+      
+      const response = await api.tournaments.getSeriesFormats(seriesId)
+      
+      console.log(`📦 [Frontend] Full response:`, response)
+      console.log(`📊 [Frontend] response.success:`, response.success)
+      console.log(`📊 [Frontend] response.data:`, response.data)
+      
+      if (response.success && response.data) {
+        console.log(`✅ [Frontend] Got ${response.data.length} formats:`, JSON.stringify(response.data, null, 2))
+        setAvailableFormats(response.data)
+        console.log(`📝 [Frontend] Set availableFormats state to:`, response.data)
+        
+        // Auto-select if only one format available
+        if (response.data.length === 1) {
+          console.log(`🎯 [Frontend] Auto-selecting single format: ${response.data[0].format}`)
+          setFormData(prev => ({ ...prev, format: response.data[0].format }))
+        }
+      } else {
+        console.log(`⚠️  [Frontend] Invalid response or no data`)
+      }
+    } catch (error: any) {
+      console.error('❌ [Frontend] Error fetching formats:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load formats for this series',
+        variant: 'destructive'
+      })
+      // Reset series selection on error
+      setFormData(prev => ({ ...prev, seriesId: '', format: '' }))
+    } finally {
+      setIsLoadingFormats(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!formData.name || !formData.seriesId) {
+    if (!formData.name || !formData.seriesId || !formData.format) {
       toast({
         title: 'Error',
-        description: 'Please fill in tournament name and select a series',
+        description: 'Please fill in tournament name, select a series, and choose a format',
         variant: 'destructive'
       })
       return
@@ -133,6 +188,8 @@ export default function CreateTournamentPage() {
       const response = await api.tournaments.create({
         name: formData.name,
         seriesId: formData.seriesId,
+        format: formData.format, // Include selected format
+        bidTimer: formData.bidTimer,
         scoringRules: scoringRules
       })
 
@@ -145,11 +202,22 @@ export default function CreateTournamentPage() {
         description: `Share code: ${response.data.code}`,
       })
     } catch (error: any) {
-      toast({
-        title: 'Failed to create tournament',
-        description: error.message || 'Please try again',
-        variant: 'destructive'
-      })
+      // Handle squad availability error with elegant dialog
+      if (error.response?.data?.error === 'Squad data not available') {
+        const selectedSeries = series.find(s => s.id === formData.seriesId);
+        setSquadErrorDetails({
+          seriesName: selectedSeries?.name || 'this series',
+          message: error.response?.data?.details || error.response?.data?.message || 'Squad data not available'
+        });
+        setShowSquadErrorDialog(true);
+      } else {
+        // Regular errors still use toast
+        toast({
+          title: 'Failed to create tournament',
+          description: error.message || 'Please try again',
+          variant: 'destructive'
+        });
+      }
     } finally {
       setIsLoading(false)
     }
@@ -262,12 +330,62 @@ export default function CreateTournamentPage() {
                     ) : (
                       series.map((s: any) => (
                         <SelectItem key={s.id} value={s.id}>
-                          {s.name} ({s.format} - {s.gender})
+                          {s.name} ({s.gender})
                         </SelectItem>
                       ))
                     )}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="format" className="text-base font-semibold">Match Format</Label>
+                <Select 
+                  value={formData.format} 
+                  onValueChange={(value) => setFormData({ ...formData, format: value })}
+                  disabled={!formData.seriesId || isLoadingFormats || availableFormats.length === 0}
+                >
+                  <SelectTrigger className="h-12 text-base">
+                    <SelectValue placeholder={
+                      !formData.seriesId ? "Select a series first" :
+                      isLoadingFormats ? "Loading formats..." :
+                      availableFormats.length === 0 ? "No formats available" :
+                      "Select format"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {isLoadingFormats ? (
+                      <SelectItem value="loading" disabled>Loading formats...</SelectItem>
+                    ) : availableFormats.length === 0 ? (
+                      <SelectItem value="empty" disabled>No formats available</SelectItem>
+                    ) : (
+                      availableFormats.map((f: any) => (
+                        <SelectItem key={f.format} value={f.format}>
+                          {f.format} ({f.squadCount} teams)
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bidTimer" className="text-base font-semibold">
+                  Auction Bid Timer
+                  <span className="text-sm text-muted-foreground font-normal ml-2">(seconds per player)</span>
+                </Label>
+                <Input
+                  id="bidTimer"
+                  type="number"
+                  min="10"
+                  max="120"
+                  placeholder="30"
+                  value={formData.bidTimer}
+                  onChange={(e) => setFormData({ ...formData, bidTimer: parseInt(e.target.value) || 30 })}
+                  className="h-12 text-base"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Time allowed for bidding on each player (recommended: 20-45 seconds)
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -645,6 +763,45 @@ export default function CreateTournamentPage() {
                   <ArrowLeft className="ml-2 h-4 w-4 rotate-180" />
                 </Button>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Squad Unavailable Dialog */}
+        <Dialog open={showSquadErrorDialog} onOpenChange={setShowSquadErrorDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-xl">
+                <div className="h-10 w-10 rounded-full bg-orange-100 dark:bg-orange-900/20 flex items-center justify-center">
+                  <Trophy className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                </div>
+                Squad Not Available
+              </DialogTitle>
+              <DialogDescription className="text-base pt-2">
+                <span className="font-medium text-foreground">
+                  {squadErrorDetails.seriesName}
+                </span>
+                {' '}doesn't have squad data yet.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="bg-muted/50 p-4 rounded-lg border">
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {squadErrorDetails.message}
+                </p>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <p className="text-sm text-blue-900 dark:text-blue-100 leading-relaxed">
+                  💡 <strong>Tip:</strong> Select an ongoing or recently completed series to create your tournament.
+                </p>
+              </div>
+              <Button 
+                onClick={() => setShowSquadErrorDialog(false)} 
+                className="w-full" 
+                size="lg"
+              >
+                Choose Another Series
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
