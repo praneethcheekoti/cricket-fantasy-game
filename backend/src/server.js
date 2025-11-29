@@ -25,6 +25,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000', // Local development
     'https://cricket-fantasy-game.vercel.app', // Old production URL
+    'https://YOUR-VERCEL-APP.vercel.app', // TODO: Replace with your actual Vercel URL
     process.env.FRONTEND_URL // Your new Vercel URL (set in Render env vars)
   ].filter(Boolean),
   credentials: true,

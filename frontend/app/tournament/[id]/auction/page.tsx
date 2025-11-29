@@ -126,8 +126,11 @@ export default function AuctionPage() {
   // Fetch dynamic stats when current player changes and has no stats
   useEffect(() => {
     if (currentPlayer?.id) {
-      // Check if player has stats
-      const hasStats = currentPlayer.overallStats && Object.keys(currentPlayer.overallStats).length > 0
+      // Check if player has meaningful stats (not just empty object)
+      const hasStats = currentPlayer.overallStats && 
+                       Object.keys(currentPlayer.overallStats).length > 0 &&
+                       (currentPlayer.overallStats.batting?.runs > 0 || 
+                        currentPlayer.overallStats.bowling?.wickets > 0)
       
       if (!hasStats) {
         console.log(`⚠️  Player ${currentPlayer.playerName} has no stats, fetching dynamic stats...`)
@@ -221,12 +224,18 @@ export default function AuctionPage() {
         console.log(`✅ [Dynamic Stats] Got stats from ${response.data.source}:`, response.data)
         setDynamicStats(response.data)
       } else {
-        console.log(`⚠️  [Dynamic Stats] No stats available`)
+        console.log(`⚠️  [Dynamic Stats] No stats available - will show zeros`)
         setDynamicStats(null)
+        // Don't show error toast, just silently fall back to showing zeros
       }
     } catch (error: any) {
       console.error('❌ [Dynamic Stats] Failed to fetch:', error)
+      // If it's a 503 (API not configured), log but don't show error
+      if (error.response?.status === 503) {
+        console.log('⚠️  [Dynamic Stats] Stats API not configured in production')
+      }
       setDynamicStats(null)
+      // Don't show error toast, just silently fall back to showing zeros
     } finally {
       setIsLoadingStats(false)
     }
@@ -565,46 +574,38 @@ export default function AuctionPage() {
                       {/* Display Stats */}
                       {!isLoadingStats && (
                         <div className="grid grid-cols-2 gap-3">
-                          {(currentPlayer.overallStats && Object.keys(currentPlayer.overallStats).length > 0) || dynamicStats ? (
-                            <>
-                              {/* Use dynamic stats if available, otherwise use existing stats */}
-                              {(() => {
-                                const stats = dynamicStats?.stats || currentPlayer.overallStats
-                                return (
-                                  <>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Matches</p>
-                                      <p className="text-2xl font-bold">{stats.batting?.matches || 0}</p>
-                                    </div>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Runs</p>
-                                      <p className="text-2xl font-bold text-primary">{stats.batting?.runs || 0}</p>
-                                    </div>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Average</p>
-                                      <p className="text-2xl font-bold">{stats.batting?.average?.toFixed(2) || 0}</p>
-                                    </div>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Strike Rate</p>
-                                      <p className="text-2xl font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || 0}</p>
-                                    </div>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Centuries</p>
-                                      <p className="text-2xl font-bold text-primary">{stats.batting?.centuries || 0}</p>
-                                    </div>
-                                    <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                      <p className="text-sm text-muted-foreground mb-1">Wickets</p>
-                                      <p className="text-2xl font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
-                                    </div>
-                                  </>
-                                )
-                              })()}
-                            </>
-                          ) : (
-                            <p className="col-span-2 text-center text-muted-foreground py-4">
-                              No stats available
-                            </p>
-                          )}
+                          {(() => {
+                            // Always show stats, use dynamic stats if available, otherwise use existing stats or show zeros
+                            const stats = dynamicStats?.stats || currentPlayer.overallStats || {}
+                            return (
+                              <>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Matches</p>
+                                  <p className="text-2xl font-bold">{stats.batting?.matches || 0}</p>
+                                </div>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Runs</p>
+                                  <p className="text-2xl font-bold text-primary">{stats.batting?.runs || 0}</p>
+                                </div>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Average</p>
+                                  <p className="text-2xl font-bold">{stats.batting?.average?.toFixed(2) || 0}</p>
+                                </div>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Strike Rate</p>
+                                  <p className="text-2xl font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || 0}</p>
+                                </div>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Centuries</p>
+                                  <p className="text-2xl font-bold text-primary">{stats.batting?.centuries || 0}</p>
+                                </div>
+                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
+                                  <p className="text-sm text-muted-foreground mb-1">Wickets</p>
+                                  <p className="text-2xl font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
+                                </div>
+                              </>
+                            )
+                          })()}
                         </div>
                       )}
                     </TabsContent>

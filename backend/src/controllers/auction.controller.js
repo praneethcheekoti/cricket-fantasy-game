@@ -19,8 +19,8 @@ const auctionController = {
         success: true,
         data: players.map(p => ({
           ...p,
-          overallStats: JSON.parse(p.overallStats),
-          vsOpponentStats: JSON.parse(p.vsOpponentStats)
+          overallStats: p.overallStats ? JSON.parse(p.overallStats) : {},
+          vsOpponentStats: p.vsOpponentStats ? JSON.parse(p.vsOpponentStats) : {}
         }))
       });
     } catch (error) {
@@ -604,13 +604,24 @@ const auctionController = {
       const CrickkApiProvider = require('../services/cricket-api/providers/crickkapi-provider');
       const crickkApi = new CrickkApiProvider();
 
+      // Check if CrickkAPI is enabled (has API key)
+      if (!crickkApi.isEnabled) {
+        console.log(`⚠️  [Dynamic Stats] CrickkAPI not configured (missing RAPIDAPI_KEY)`);
+        return res.status(503).json({
+          success: false,
+          error: 'Player stats API is not configured',
+          fallbackStats: {} // Return empty stats so frontend can show zeros
+        });
+      }
+
       const stats = await crickkApi.fetchPlayerStatsByName(auctionPlayer.playerName, format);
 
       if (!stats) {
         console.log(`⚠️  [Dynamic Stats] No stats available for ${auctionPlayer.playerName}`);
         return res.status(404).json({
           success: false,
-          error: 'Stats not available for this player'
+          error: 'Stats not available for this player',
+          fallbackStats: {} // Return empty stats so frontend can show zeros
         });
       }
 
