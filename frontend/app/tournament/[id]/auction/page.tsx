@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,7 @@ export default function AuctionPage() {
   const [myTeam, setMyTeam] = useState<any[]>([])
   const [allTeams, setAllTeams] = useState<any[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
-  const [walletBalance, setWalletBalance] = useState(10000000000) // 100 Cr in paise
+  const [walletBalance, setWalletBalance] = useState(2000000000) // 200 Cr in paise (default)
   const [bidAmount, setBidAmount] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isBidding, setIsBidding] = useState(false)
@@ -39,6 +39,17 @@ export default function AuctionPage() {
   const [pausedBy, setPausedBy] = useState<string | null>(null) // User who paused
   const [pausedByName, setPausedByName] = useState<string>('') // Name of user who paused
   const [isPauseActionLoading, setIsPauseActionLoading] = useState(false) // Loading state for pause/unpause
+  const [showCelebration, setShowCelebration] = useState(false) // Celebration modal state
+  const [celebrationData, setCelebrationData] = useState<any>(null) // Data for celebration (player, buyer, price)
+  const [lastSoldPlayerId, setLastSoldPlayerId] = useState<string | null>(null) // Track last sold player to avoid duplicate celebrations
+  
+  // Ref to track isBidding state for timer (avoids stale closure)
+  const isBiddingRef = useRef(false)
+  
+  // Update ref whenever isBidding changes
+  useEffect(() => {
+    isBiddingRef.current = isBidding
+  }, [isBidding])
 
   // Computed values - defined early so useEffect can use them
   const currentPlayer = players[currentPlayerIndex]
@@ -56,15 +67,20 @@ export default function AuctionPage() {
     }
     fetchAuctionData()
     
-    // Poll for updates every 3 seconds (for other users' bids)
-    // But STOP polling when completing auction to prevent race conditions
+    // 🛡️ LAYER 3: Fast polling (1 second) for near real-time sync
+    // Poll for updates every 1 second to ensure all users see bids quickly
+    // This prevents sniping by keeping everyone's view synchronized
     const interval = setInterval(() => {
       if (pollingEnabled && !isCompletingAuction) {
         fetchAuctionData()
+        // Also fetch bid history for current player so everyone sees real-time bids
+        if (currentPlayer?.id) {
+          fetchBidHistory(currentPlayer.id)
+        }
       }
-    }, 3000)
+    }, 1000) // Changed from 3000ms to 1000ms for faster updates
     return () => clearInterval(interval)
-  }, [params.id, pollingEnabled, isCompletingAuction])
+  }, [params.id, pollingEnabled, isCompletingAuction, currentPlayer?.id])
 
   // Timer countdown effect
   useEffect(() => {
@@ -79,12 +95,13 @@ export default function AuctionPage() {
     setIsCompletingAuction(false) // Reset flag for new player
 
     const countdown = setInterval(() => {
-      // Don't decrement if auction is paused
-      if (isPaused) {
-        return
-      }
-      
       setTimeRemaining((prev) => {
+        // Don't decrement if auction is paused OR if someone is placing a bid
+        // Use ref for isBidding to avoid stale closure
+        if (isPaused || isBiddingRef.current) {
+          return prev // Keep current value, don't decrement
+        }
+        
         if (prev <= 1) {
           clearInterval(countdown)
           return 0
@@ -97,22 +114,40 @@ export default function AuctionPage() {
       clearInterval(countdown)
     }
   }, [currentPlayer?.id, bidTimerDuration, isPaused])
+  // Note: isBidding removed from dependencies - we check it inside the state update instead
 
   // Separate effect to handle timer expiry
   useEffect(() => {
-    if (timeRemaining === 0 && currentPlayer && !isCompletingAuction && !isPaused && currentPlayer.status === 'available') {
+    if (timeRemaining === 0 && currentPlayer && !isCompletingAuction && !isPaused && !isBidding && currentPlayer.status === 'available') {
       console.log('⏰⏰⏰ TIMER HIT ZERO! Completing player auction')
       console.log('Current player:', currentPlayer.playerName)
       completePlayerAuction()
     }
-  }, [timeRemaining, currentPlayer?.id, isCompletingAuction, isPaused])
+  }, [timeRemaining, currentPlayer?.id, isCompletingAuction, isPaused, isBidding])
 
-  // Reset timer when new bid is placed
+  // 🛡️ LAYER 2: Reset timer when new bid is placed
+  // This ensures ALL users get full bidding time after any bid
+  // Prevents sniping by giving everyone fair chance to respond
   useEffect(() => {
     if (currentBid > 0 && currentPlayer) {
-      setTimeRemaining(bidTimerDuration) // Reset to tournament's bid timer on new bid
+      console.log(`🔄 TIMER RESET: New bid detected (${currentBid / 10000000} Cr), resetting timer to ${bidTimerDuration}s`);
+      console.log(`   Current isBidding state: ${isBidding}`);
+      console.log(`   Current timeRemaining before reset: ${timeRemaining}s`);
+      setTimeRemaining(bidTimerDuration) // Full reset to tournament's bid timer
+      setTimerActive(true) // Ensure timer is active
+      console.log(`   ✅ Timer reset complete, should count from ${bidTimerDuration}s`);
     }
   }, [currentBid, bidTimerDuration])
+
+  // Auto-populate bid input with minimum bid when player changes or bid updates
+  useEffect(() => {
+    if (currentPlayer && currentBid >= 0) {
+      const minBidInCr = (currentBid + 10000000) / 10000000 // Current bid + 1 Cr
+      setBidAmount(minBidInCr.toString())
+    } else {
+      setBidAmount('')
+    }
+  }, [currentPlayer?.id, currentBid])
 
   // Fetch bid history when current player changes
   useEffect(() => {
@@ -126,17 +161,19 @@ export default function AuctionPage() {
   // Fetch dynamic stats when current player changes and has no stats
   useEffect(() => {
     if (currentPlayer?.id) {
-      // Check if player has meaningful stats (not just empty object)
+      // Check if player has structured stats data (not just empty object)
+      // Look for structure (batting/bowling fields), not values (runs/wickets)
       const hasStats = currentPlayer.overallStats && 
+                       typeof currentPlayer.overallStats === 'object' &&
                        Object.keys(currentPlayer.overallStats).length > 0 &&
-                       (currentPlayer.overallStats.batting?.runs > 0 || 
-                        currentPlayer.overallStats.bowling?.wickets > 0)
+                       (currentPlayer.overallStats.batting !== undefined || 
+                        currentPlayer.overallStats.bowling !== undefined)
       
       if (!hasStats) {
-        console.log(`⚠️  Player ${currentPlayer.playerName} has no stats, fetching dynamic stats...`)
+        console.log(`⚠️  Player ${currentPlayer.playerName} has no structured stats, fetching dynamic stats...`)
         fetchDynamicStats(currentPlayer.id)
       } else {
-        console.log(`✅ Player ${currentPlayer.playerName} already has stats`)
+        console.log(`✅ Player ${currentPlayer.playerName} has structured stats (batting/bowling data exists)`)
         setDynamicStats(null) // Clear dynamic stats if player already has stats
       }
     } else {
@@ -193,11 +230,47 @@ export default function AuctionPage() {
       // Fetch my team
       const teamRes = await api.auction.getMyTeam(params.id as string)
       setMyTeam(teamRes.data.players || [])
-      setWalletBalance(teamRes.data.walletBalance || 10000000000)
+      setWalletBalance(teamRes.data.walletBalance || 2000000000)
 
       // Fetch all teams
       const teamsRes = await api.auction.getAllTeams(params.id as string)
       setAllTeams(teamsRes.data || [])
+
+      // Check if a player just got sold (for celebration across all users)
+      // Find the most recently sold player that we haven't celebrated yet
+      const recentlySoldPlayer = parsedPlayers.find((p: any) => 
+        p.status === 'sold' && 
+        p.id !== lastSoldPlayerId &&
+        p.soldTo // Has buyer info
+      )
+
+      if (recentlySoldPlayer) {
+        // Check if this is a recent sale (within last 10 seconds)
+        // We estimate based on player order - if it's before current player, it's recent
+        const soldPlayerIndex = parsedPlayers.indexOf(recentlySoldPlayer)
+        const currentAvailableIndex = availablePlayers.length > 0 ? parsedPlayers.indexOf(availablePlayers[0]) : parsedPlayers.length
+        
+        // If sold player is within 5 positions before current, show celebration
+        if (currentAvailableIndex - soldPlayerIndex <= 5 && currentAvailableIndex - soldPlayerIndex > 0) {
+          console.log('🎉 Detected recent sale during polling - showing celebration for all users')
+          
+          // Get buyer name
+          const buyerTeam = teamsRes.data?.find((t: any) => t.id === recentlySoldPlayer.soldTo)
+          
+          setCelebrationData({
+            playerName: recentlySoldPlayer.playerName,
+            soldTo: buyerTeam?.user?.name || 'Unknown',
+            price: recentlySoldPlayer.currentPrice
+          })
+          setShowCelebration(true)
+          setLastSoldPlayerId(recentlySoldPlayer.id)
+          
+          // Auto-dismiss after 5 seconds
+          setTimeout(() => {
+            setShowCelebration(false)
+          }, 5000)
+        }
+      }
 
       setIsLoading(false)
     } catch (error: any) {
@@ -335,13 +408,24 @@ export default function AuctionPage() {
       
       // Check if player was sold or unsold
       if (response.data?.soldTo) {
-        // Player was sold
-        toast({
-          title: '⚡ Player Sold!',
-          description: `${currentPlayer.playerName} sold to ${response.data.soldTo} for ${formatCurrency(response.data.price)}`,
+        // Player was sold - Show celebration modal!
+        console.log('🎉 Player sold - triggering celebration modal');
+        setCelebrationData({
+          playerName: currentPlayer.playerName,
+          soldTo: response.data.soldTo,
+          price: response.data.price
         })
+        setShowCelebration(true)
+        setLastSoldPlayerId(currentPlayer.id) // Mark as celebrated
+        
+        // Auto-dismiss after 5 seconds and load next player
+        setTimeout(() => {
+          setShowCelebration(false)
+          setCelebrationData(null)
+        }, 5000)
       } else {
-        // No bids - player marked as unsold
+        // No bids - player marked as unsold (no celebration, just continue)
+        console.log('❌ Player unsold - loading next player without celebration');
         toast({
           title: '❌ No Bids',
           description: `${currentPlayer.playerName} goes unsold. Moving to next player...`,
@@ -349,16 +433,29 @@ export default function AuctionPage() {
         })
       }
       
-      // Immediately refresh to get updated data (next player should appear)
+      // Immediately refresh to get updated data (next player should appear after celebration)
       await fetchAuctionData()
       
       console.log('✅ RESUMING POLLING')
       setPollingEnabled(true) // Resume polling after completion
     } catch (error: any) {
+      // 🛡️ ANTI-SNIPE: If backend detected recent bid, this is expected
+      // Don't log error or show toast - just refresh data and let timer reset naturally
+      if (error.message?.includes('Recent bid detected') || error.message?.includes('recent bid')) {
+        console.log('🛡️ Anti-sniping protection triggered - bid placed in last 5 seconds, refreshing data');
+        // Immediately fetch updated data so timer resets
+        await fetchAuctionData()
+        if (currentPlayer?.id) {
+          await fetchBidHistory(currentPlayer.id)
+        }
+        setPollingEnabled(true)
+        setIsCompletingAuction(false)
+        return; // Don't show error toast
+      }
+      
+      // Only log errors for unexpected failures
       console.error('❌ Error completing auction:', error)
       console.error('❌ Error message:', error.message)
-      console.error('❌ Error stack:', error.stack)
-      console.error('❌ Full error object:', JSON.stringify(error, null, 2))
       
       // Only show error if it's not "already sold" or "concurrent request"
       if (!error.message?.includes('already sold') && !error.message?.includes('concurrent')) {
@@ -410,7 +507,10 @@ export default function AuctionPage() {
         title: 'Bid placed!',
         description: `You bid ${formatCurrency(bidInPaise)}`,
       })
-      setBidAmount('')
+      
+      // Reset to next minimum bid after successful bid
+      const nextMinBid = (bidInPaise + 10000000) / 10000000
+      setBidAmount(nextMinBid.toString())
       
       // Refresh auction data and bid history
       await fetchAuctionData()
@@ -544,18 +644,12 @@ export default function AuctionPage() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Stats Tabs */}
-                  <Tabs defaultValue="overall" className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
-                      <TabsTrigger value="overall">Overall</TabsTrigger>
-                      <TabsTrigger value="opposition">vs Opposition</TabsTrigger>
-                      <TabsTrigger value="venue">Home/Away</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="overall" className="space-y-3 mt-4">
+                <CardContent className="space-y-2">
+                  {/* Player Stats */}
+                  <div className="space-y-2">
                       {/* Dynamic Stats Banner */}
                       {dynamicStats && dynamicStats.source === 'dynamic' && (
-                        <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30 mb-3">
+                        <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/10 border border-primary/30">
                           <TrendingUp className="h-4 w-4 text-primary" />
                           <p className="text-sm font-medium text-primary">
                             Live {dynamicStats.format} Stats Loaded
@@ -573,87 +667,76 @@ export default function AuctionPage() {
 
                       {/* Display Stats */}
                       {!isLoadingStats && (
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
                           {(() => {
                             // Always show stats, use dynamic stats if available, otherwise use existing stats or show zeros
                             const stats = dynamicStats?.stats || currentPlayer.overallStats || {}
                             return (
                               <>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Matches</p>
-                                  <p className="text-2xl font-bold">{stats.batting?.matches || 0}</p>
+                                {/* Matches - Full Width */}
+                                <div className="p-3 rounded-lg bg-gradient-to-r from-primary/10 to-secondary/10 border border-primary/20 text-center">
+                                  <p className="text-xs text-muted-foreground mb-0.5">Matches</p>
+                                  <p className="text-xl font-bold">{stats.batting?.matches || 0}</p>
                                 </div>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Runs</p>
-                                  <p className="text-2xl font-bold text-primary">{stats.batting?.runs || 0}</p>
-                                </div>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Average</p>
-                                  <p className="text-2xl font-bold">{stats.batting?.average?.toFixed(2) || 0}</p>
-                                </div>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Strike Rate</p>
-                                  <p className="text-2xl font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || 0}</p>
-                                </div>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Centuries</p>
-                                  <p className="text-2xl font-bold text-primary">{stats.batting?.centuries || 0}</p>
-                                </div>
-                                <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                                  <p className="text-sm text-muted-foreground mb-1">Wickets</p>
-                                  <p className="text-2xl font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
+
+                                {/* Two Column Layout: BATTING | BOWLING */}
+                                <div className="grid grid-cols-2 gap-2">
+                                  {/* BATTING Column */}
+                                  <div className="space-y-1.5">
+                                    <p className="text-xs font-semibold text-primary uppercase text-center mb-1">Batting</p>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Runs</p>
+                                      <p className="text-lg font-bold text-primary">{stats.batting?.runs || 0}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Average</p>
+                                      <p className="text-lg font-bold">{stats.batting?.average?.toFixed(2) || '0.00'}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Strike Rate</p>
+                                      <p className="text-lg font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || '0.00'}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Centuries</p>
+                                      <p className="text-lg font-bold text-primary">{stats.batting?.centuries || 0}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Fifties</p>
+                                      <p className="text-lg font-bold text-primary">{stats.batting?.halfCenturies || stats.batting?.fifties || 0}</p>
+                                    </div>
+                                  </div>
+
+                                  {/* BOWLING Column */}
+                                  <div className="space-y-1.5">
+                                    <p className="text-xs font-semibold text-secondary uppercase text-center mb-1">Bowling</p>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Wickets</p>
+                                      <p className="text-lg font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Average</p>
+                                      <p className="text-lg font-bold">{stats.bowling?.average?.toFixed(2) || '0.00'}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Economy</p>
+                                      <p className="text-lg font-bold text-accent">{stats.bowling?.economy?.toFixed(2) || '0.00'}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">5W Hauls</p>
+                                      <p className="text-lg font-bold text-secondary">{stats.bowling?.fiveWickets || 0}</p>
+                                    </div>
+                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Strike Rate</p>
+                                      <p className="text-lg font-bold">{stats.bowling?.strikeRate?.toFixed(2) || '0.00'}</p>
+                                    </div>
+                                  </div>
                                 </div>
                               </>
                             )
                           })()}
                         </div>
                       )}
-                    </TabsContent>
-                    <TabsContent value="opposition" className="space-y-3 mt-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        {currentPlayer.vsOpponentStats ? (
-                          <>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Matches</p>
-                              <p className="text-2xl font-bold">{currentPlayer.vsOpponentStats.matches || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Runs</p>
-                              <p className="text-2xl font-bold text-primary">{currentPlayer.vsOpponentStats.runs || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Average</p>
-                              <p className="text-2xl font-bold">{currentPlayer.vsOpponentStats.average || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Wickets</p>
-                              <p className="text-2xl font-bold text-secondary">{currentPlayer.vsOpponentStats.wickets || 0}</p>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="col-span-2 text-center text-muted-foreground py-4">No stats available</p>
-                        )}
-                      </div>
-                    </TabsContent>
-                    <TabsContent value="venue" className="space-y-3 mt-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        {currentPlayer.vsOpponentStats ? (
-                          <>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Home Average</p>
-                              <p className="text-2xl font-bold">{currentPlayer.vsOpponentStats.homeAverage || 0}</p>
-                            </div>
-                            <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                              <p className="text-sm text-muted-foreground mb-1">Away Average</p>
-                              <p className="text-2xl font-bold">{currentPlayer.vsOpponentStats.awayAverage || 0}</p>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="col-span-2 text-center text-muted-foreground py-4">No stats available</p>
-                        )}
-                      </div>
-                    </TabsContent>
-                  </Tabs>
+                  </div>
 
                   {/* Timer */}
                   {/* Paused Banner */}
@@ -729,7 +812,8 @@ export default function AuctionPage() {
                           }
                         }}
                         className="h-12 text-base"
-                        step="0.1"
+                        step="1"
+                        min={currentBid >= 0 ? ((currentBid + 10000000) / 10000000).toString() : "1"}
                         disabled={isPaused}
                       />
                       <Button
@@ -752,7 +836,7 @@ export default function AuctionPage() {
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground mt-2">
-                      Min bid: {formatCurrency(currentBid + 1000000)} • Your balance: {formatCurrency(walletBalance)}
+                      Min bid: {formatCurrency(currentBid + 10000000)} • Your balance: {formatCurrency(walletBalance)}
                     </p>
                   </div>
                 </CardContent>
@@ -1088,6 +1172,100 @@ export default function AuctionPage() {
           </div>
         </div>
       </div>
+
+      {/* 🎉 Celebration Modal - Player Sold */}
+      {showCelebration && celebrationData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+          {/* Confetti Animation */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {[...Array(50)].map((_, i) => (
+              <div
+                key={i}
+                className="absolute animate-confetti"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: '-10px',
+                  animationDelay: `${Math.random() * 2}s`,
+                  animationDuration: `${3 + Math.random() * 2}s`
+                }}
+              >
+                <div 
+                  className="text-2xl"
+                  style={{
+                    transform: `rotate(${Math.random() * 360}deg)`
+                  }}
+                >
+                  {['🎉', '🎊', '⚡', '🏆', '✨', '🌟'][Math.floor(Math.random() * 6)]}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Celebration Card */}
+          <Card className="relative z-10 w-full max-w-2xl mx-4 border-4 border-primary shadow-2xl animate-in zoom-in duration-500">
+            <CardContent className="p-12 text-center space-y-6">
+              {/* Main Emoji */}
+              <div className="text-8xl animate-bounce">
+                🎉
+              </div>
+
+              {/* Sold Banner */}
+              <div className="space-y-2">
+                <h2 className="text-5xl font-black bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent animate-pulse">
+                  SOLD!
+                </h2>
+              </div>
+
+              {/* Player Info */}
+              <div className="space-y-4 py-6">
+                <div>
+                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Player</p>
+                  <p className="text-4xl font-bold text-primary">{celebrationData.playerName}</p>
+                </div>
+
+                <div className="flex items-center justify-center gap-3">
+                  <div className="h-1 w-16 bg-gradient-to-r from-transparent to-primary"></div>
+                  <p className="text-xl text-muted-foreground">sold to</p>
+                  <div className="h-1 w-16 bg-gradient-to-r from-primary to-transparent"></div>
+                </div>
+
+                <div>
+                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Winner</p>
+                  <p className="text-4xl font-bold text-secondary">{celebrationData.soldTo}</p>
+                </div>
+
+                <div className="mt-6 p-6 rounded-xl bg-gradient-to-r from-accent/20 to-primary/20 border-2 border-accent">
+                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Final Price</p>
+                  <p className="text-5xl font-black text-accent">{formatCurrency(celebrationData.price)}</p>
+                </div>
+              </div>
+
+              {/* Loading indicator */}
+              <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <p className="text-sm">Loading next player...</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Confetti CSS Animation */}
+      <style jsx>{`
+        @keyframes confetti {
+          0% {
+            transform: translateY(0) rotateZ(0deg);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(100vh) rotateZ(720deg);
+            opacity: 0;
+          }
+        }
+        .animate-confetti {
+          animation: confetti linear forwards;
+        }
+      `}</style>
     </div>
   )
 }

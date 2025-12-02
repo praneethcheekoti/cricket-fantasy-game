@@ -147,32 +147,32 @@ class ApiSelector {
    */
   getProviderPriority(requestType) {
     // Strategy:
-    // - Unofficial Cricbuzz for series, squads, players (format-specific squads!)
+    // - Unofficial Cricbuzz ONLY for series, squads, players, matches
+    // - Fallback removed to avoid API quota waste and inconsistent data formats
     // - RapidAPI Cricbuzz for player stats (pre-auction tier calculation)
     // - CrickkAPI for dynamic stats (during auction) - handled separately
-    // - CricketData as fallback
 
     switch (requestType) {
       case 'series':
       case 'squad':
-        // Use Unofficial Cricbuzz (has format-specific squads)
-        return ['unofficial', 'cricketdata', 'cricapi'];
+        // Use Unofficial Cricbuzz ONLY (no fallbacks - saves quota, consistent data)
+        return ['unofficial'];
 
       case 'match':
-        // Match data - CricketData is fine (not using live scores yet)
-        return ['cricketdata', 'unofficial', 'cricapi'];
+        // Match data - Use Unofficial Cricbuzz ONLY (no fallbacks - consistent format)
+        return ['unofficial'];
 
       case 'player':
-        // Player list - use Unofficial Cricbuzz (squad-based)
-        return ['unofficial', 'cricketdata', 'cricapi'];
+        // Player list - use Unofficial Cricbuzz ONLY (no fallbacks - squad-based)
+        return ['unofficial'];
 
       case 'playerStats':
         // Player stats - use RapidAPI Cricbuzz (career stats for tier calculation)
         return ['rapidapi', 'cricketdata', 'cricapi'];
 
       case 'liveScore':
-        // Live data - not implemented yet, but Cricbuzz would be primary
-        return ['cricbuzz', 'unofficial', 'cricketdata'];
+        // Live scorecard - Use Unofficial Cricbuzz ONLY (consistent format for fantasy points)
+        return ['unofficial'];
 
       default:
         // Default priority

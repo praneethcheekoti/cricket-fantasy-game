@@ -12,7 +12,7 @@ const matchRoutes = require('./routes/match.routes');
 const scheduler = require('./scheduler');
 const { cleanupExpiredCache } = require('./jobs/cache-cleanup.job');
 const { checkAndResetIfNeeded } = require('./jobs/api-reset.job');
-const { refreshLiveScores } = require('./jobs/live-score.job');
+// const { refreshLiveScores } = require('./jobs/live-score.job'); // DISABLED - Not needed anymore
 
 // Cricket API Service
 const cricketApiService = require('./services/cricket-api');
@@ -76,9 +76,9 @@ const runStartupJobs = async () => {
     console.log('2️⃣ Checking API usage counters...');
     await checkAndResetIfNeeded();
 
-    // Job 3: Refresh live scores
-    console.log('3️⃣ Refreshing live match scores...');
-    await refreshLiveScores();
+    // Job 3: Refresh live scores - DISABLED (we process completed matches daily instead)
+    // console.log('3️⃣ Refreshing live match scores...');
+    // await refreshLiveScores();
 
     console.log('========================================');
     console.log('✅ STARTUP JOBS COMPLETED');

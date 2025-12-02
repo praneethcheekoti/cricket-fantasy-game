@@ -149,7 +149,7 @@ export const api = {
       const response = await fetch(`${API_URL}/tournaments/${id}`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
       })
-      return handleResponse(response)
+      return handleResponse<{ success: boolean; data: any }>(response)
     },
 
     getUserTournaments: async () => {

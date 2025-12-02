@@ -4,10 +4,10 @@ const cricketApiService = require('./cricket-api');
 const prisma = new PrismaClient();
 
 const TIER_PRICES = {
-  A: 500000000,  // 5 Cr in paise
-  B: 300000000,  // 3 Cr
-  C: 100000000,  // 1 Cr
-  D: 50000000    // 50 L
+  A: 70000000,   // 7 Cr in paise
+  B: 50000000,   // 5 Cr
+  C: 30000000,   // 3 Cr
+  D: 10000000    // 1 Cr
 };
 
 const auctionService = {
@@ -267,13 +267,15 @@ const auctionService = {
             allPlayers.push({
               tournamentId: tournament.id,
               playerId: player.apiPlayerId || player.id || `${player.name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}`,
+              cricketDataPlayerId: playerStats?.cricketDataPlayerId || null, // CricketData player ID (if stats came from CricketData)
               playerName: player.name,
               role: player.role,
               team: player.team,
               tier: tier,
               basePrice: TIER_PRICES[tier],
               overallStats: JSON.stringify(playerStats || player.overallStats || {}),
-              vsOpponentStats: JSON.stringify({}) // Will be populated when match data is available
+              vsOpponentStats: JSON.stringify({}), // Will be populated when match data is available
+              statsSource: playerStats ? 'cricketdata' : 'none' // Track where stats came from
             });
             
             // Small delay to avoid rate limiting (only if fetching from API, not cache)

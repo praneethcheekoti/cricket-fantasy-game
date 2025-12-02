@@ -184,7 +184,9 @@ export default function MyTeamPage() {
             <Users className="h-10 w-10 text-primary" />
             My Team
           </h2>
-          <p className="text-muted-foreground text-lg">{tournament?.name}</p>
+          <p className="text-muted-foreground text-lg">
+            {tournament?.name} {tournament?.seriesName && `(${tournament.seriesName})`}
+          </p>
         </div>
 
         {/* Team Stats */}

@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const { cleanupExpiredCache } = require('./jobs/cache-cleanup.job');
 const { resetApiUsageCounters } = require('./jobs/api-reset.job');
-const { refreshLiveScores } = require('./jobs/live-score.job');
+// const { refreshLiveScores } = require('./jobs/live-score.job'); // DISABLED - Using daily completed match job instead
 
 /**
  * Background Job Scheduler
@@ -54,20 +54,22 @@ class JobScheduler {
       job: apiResetJob
     });
 
-    // Job 3: Live Score Refresh - Every 5 minutes
-    const liveScoreJob = cron.schedule('*/5 * * * *', async () => {
-      await refreshLiveScores();
-    }, {
-      scheduled: true,
-      timezone: "Asia/Kolkata"
-    });
+    // Job 3: Live Score Refresh - DISABLED
+    // We don't need real-time live scores. Instead, we process completed matches once daily.
+    // This saves API calls and is more efficient for fantasy scoring.
+    // const liveScoreJob = cron.schedule('*/5 * * * *', async () => {
+    //   await refreshLiveScores();
+    // }, {
+    //   scheduled: true,
+    //   timezone: "Asia/Kolkata"
+    // });
 
-    this.jobs.push({
-      name: 'Live Score Refresh',
-      schedule: '*/5 * * * *',
-      description: 'Every 5 minutes',
-      job: liveScoreJob
-    });
+    // this.jobs.push({
+    //   name: 'Live Score Refresh',
+    //   schedule: '*/5 * * * *',
+    //   description: 'Every 5 minutes',
+    //   job: liveScoreJob
+    // });
 
     this.isRunning = true;
 

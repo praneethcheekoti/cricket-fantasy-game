@@ -313,7 +313,7 @@ export default function DashboardPage() {
                               {tournament.participants?.length || 0} players
                             </span>
                             <span className="text-xs">
-                              {tournament.series?.name} ({tournament.series?.format})
+                              ({tournament.seriesName || tournament.series?.name || 'Series not set'})
                             </span>
                           </CardDescription>
                         </CardHeader>

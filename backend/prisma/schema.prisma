@@ -41,6 +41,8 @@ model Tournament {
   name          String
   code          String         @unique
   seriesId      String
+  apiSeriesId   String?        // Store API series ID directly (doesn't expire)
+  seriesName    String?        // Store series name for display
   format        String         @default("ODI") // "Test", "ODI", "T20"
   creatorId     String
   status        String         @default("setup") // "setup", "locked", "auction", "live", "completed"
@@ -53,7 +55,7 @@ model Tournament {
   awardRules    String         // JSON: {manOfMatch: 50, playerOfSeries: 100}
   compositionRules String      // JSON: {minBatsmen: 0, minBowlers: 0, minAllRounders: 0, minWicketKeepers: 0}
   
-  walletAmount  Float          @default(10000000000) // Rs 100 Cr in paise
+  walletAmount  Float          @default(2000000000) // Rs 200 Cr in paise
   bidTimer      Int            @default(30) // Auction bid timer in seconds (default 30)
   isPaused      Boolean        @default(false) // Is auction currently paused
   pausedBy      String?        // User ID who paused the auction
@@ -84,7 +86,8 @@ model TournamentParticipant {
 model AuctionPlayer {
   id            String         @id @default(auto()) @map("_id") @db.ObjectId
   tournamentId  String
-  playerId      String         // Real cricket player ID
+  playerId      String         // Real cricket player ID (Unofficial Cricbuzz ID - used for scorecard matching)
+  cricketDataPlayerId String?  // CricketData API player ID (for stats retrieval only, not used in downstream)
   playerName    String
   role          String         // "Batsman", "Bowler", "All-Rounder", "Wicket-Keeper"
   team          String         // Cricket team: "India", "Australia", "England", etc.
@@ -97,6 +100,7 @@ model AuctionPlayer {
   // Player Stats (JSON)
   overallStats  String         // JSON: international career stats
   vsOpponentStats String       // JSON: stats against tournament opposition
+  statsSource   String?        // "cricketdata", "crickkapi", or "rapidapi" - tracks where stats came from
   
   tournament    Tournament     @relation(fields: [tournamentId], references: [id])
   bids          Bid[]
@@ -149,10 +153,12 @@ model Match {
   id            String         @id @default(auto()) @map("_id") @db.ObjectId
   seriesId      String
   matchNumber   Int
+  matchDesc     String?        // "1st ODI", "2nd Test", etc.
   team1         String
   team2         String
   venue         String
   matchDate     DateTime
+  format        String         // "ODI", "Test", "T20"
   status        String         @default("upcoming") // "upcoming", "live", "completed"
   externalMatchId String?      // ID from cricket API
   
@@ -218,6 +224,7 @@ model MatchCache {
   apiMatchId    String   @unique // Automatically indexed
   apiSource     String
   apiSeriesId   String
+  matchDesc     String?  // Match description (e.g., "1st ODI", "2nd Test")
   team1         String
   team2         String
   team1Code     String?  // e.g., IND, AUS

@@ -513,43 +513,43 @@ class CricketApiService {
       // Ensure API selector is initialized
       await apiSelector.initialize();
 
-      // Get RapidAPI provider directly (BYPASS API Selector for player stats)
-      const rapidapiProvider = apiSelector.providers?.rapidapi;
-      if (!rapidapiProvider || !rapidapiProvider.isEnabled) {
-        console.log(`[Cricket API] ⚠️  RapidAPI not available - skipping stats for ${playerName}`);
+      // Get CricketData provider (REPLACED RapidAPI with CricketData)
+      const cricketdataProvider = apiSelector.providers?.cricketdata;
+      if (!cricketdataProvider || !cricketdataProvider.isEnabled) {
+        console.log(`[Cricket API] ⚠️  CricketData not available - skipping stats for ${playerName}`);
         return null;
       }
 
       // Check quota before attempting
-      const hasQuota = await apiUsageTracker.hasQuota('rapidapi');
+      const hasQuota = await apiUsageTracker.hasQuota('cricketdata');
       if (!hasQuota) {
-        console.log(`[Cricket API] ⚠️  RapidAPI quota exhausted - skipping stats for ${playerName}`);
+        console.log(`[Cricket API] ⚠️  CricketData quota exhausted - skipping stats for ${playerName}`);
         return null;
       }
 
       // Use fetchPlayerStatsByName which handles search + stats internally
       // Pass format to get format-specific stats
-      const stats = await rapidapiProvider.fetchPlayerStatsByName(playerName, format);
+      const stats = await cricketdataProvider.fetchPlayerStatsByName(playerName, format);
       
       if (stats) {
-        console.log(`[Cricket API] ✅ Got ${format} stats for ${playerName}`);
+        console.log(`[Cricket API] ✅ Got ${format} stats for ${playerName} from CricketData`);
         
         // Cache stats with role, team, and country
         await cacheService.savePlayerCache({
-          apiPlayerId: `rapidapi_${playerName.replace(/\s+/g, '_')}`,
+          apiPlayerId: `cricketdata_${playerName.replace(/\s+/g, '_')}`,
           name: playerName,
           fullName: playerName,
           role: playerRole,
           team: playerTeam,
           country: playerTeam, // For international cricket, country = team
           overallStats: stats
-        }, 'rapidapi');
+        }, 'cricketdata');
         
         await cacheService.recordApiCall();
         return stats;
       }
 
-      console.log(`[Cricket API] ⚠️  No stats found for ${playerName}`);
+      console.log(`[Cricket API] ⚠️  No stats found for ${playerName} in CricketData`);
       return null;
 
     } catch (error) {

@@ -381,11 +381,148 @@ class UnofficialCricbuzzProvider extends BaseCricketProvider {
     return short;
   }
 
+  /**
+   * Fetch matches by series ID
+   * @param {string} seriesId - Series ID (e.g., "9638", "3641")
+   * @returns {Promise<Array>} Array of normalized matches
+   */
+  async fetchMatchesBySeries(seriesId) {
+    try {
+      console.log(`[${this.name}] 📡 Fetching matches for series ${seriesId}...`);
+      
+      const data = await this.makeRequest('/series/get-matches', {
+        seriesId: seriesId
+      });
+
+      if (!data || !data.adWrapper) {
+        console.log(`[${this.name}] ⚠️  No adWrapper in response`);
+        return [];
+      }
+
+      const allMatches = [];
+
+      // Process adWrapper array (contains matchDetails and adDetail items)
+      data.adWrapper.forEach(item => {
+        // Skip ad items, only process match details
+        if (item.matchDetails && item.matchDetails.matches) {
+          item.matchDetails.matches.forEach(matchWrapper => {
+            if (matchWrapper.matchInfo) {
+              const match = this.normalizeMatch(matchWrapper.matchInfo, seriesId);
+              if (match) {
+                allMatches.push(match);
+              }
+            }
+          });
+        }
+      });
+
+      console.log(`[${this.name}] ✅ Found ${allMatches.length} matches for series ${seriesId}`);
+      return allMatches;
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Failed to fetch matches for series ${seriesId}:`, error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Normalize match data from Unofficial Cricbuzz API
+   */
+  normalizeMatch(matchInfo, seriesId) {
+    try {
+      // Extract match format from matchFormat field
+      let format = 'ODI'; // Default
+      if (matchInfo.matchFormat) {
+        if (matchInfo.matchFormat.toLowerCase().includes('t20')) format = 'T20';
+        else if (matchInfo.matchFormat.toLowerCase().includes('test')) format = 'Test';
+        else if (matchInfo.matchFormat.toLowerCase().includes('odi')) format = 'ODI';
+      }
+
+      // Extract team names
+      const team1 = matchInfo.team1?.teamName || 'TBD';
+      const team2 = matchInfo.team2?.teamName || 'TBD';
+
+      // Extract status
+      let status = 'upcoming';
+      if (matchInfo.state) {
+        const state = matchInfo.state.toLowerCase();
+        if (state.includes('complete')) status = 'completed';
+        else if (state.includes('live') || state.includes('innings')) status = 'live';
+      }
+
+      // Extract venue and date
+      const venue = matchInfo.venueInfo?.ground || 'TBD';
+      const city = matchInfo.venueInfo?.city || '';
+      const matchDate = matchInfo.startDate ? new Date(parseInt(matchInfo.startDate)) : new Date();
+
+      return {
+        apiMatchId: matchInfo.matchId?.toString(),
+        apiSeriesId: seriesId,
+        matchDesc: matchInfo.matchDesc || null, // Add at top level for easy access
+        team1,
+        team2,
+        team1Code: matchInfo.team1?.teamSName || '',
+        team2Code: matchInfo.team2?.teamSName || '',
+        venue,
+        city,
+        matchDate, // Only matchDate, not date
+        format,
+        matchType: matchInfo.matchType || 'bilateral',
+        status,
+        tossWinner: matchInfo.tossResults?.tossWinnerName || null,
+        tossDecision: matchInfo.tossResults?.decision || null,
+        result: matchInfo.status || null,
+        metadata: JSON.stringify({
+          matchDesc: matchInfo.matchDesc,
+          seriesName: matchInfo.seriesName,
+          matchNumber: matchInfo.matchId
+        })
+      };
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Error normalizing match:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch scorecard (live score) for a match
+   * @param {string} matchId - Match ID from API
+   * @returns {Promise<Object>} Scorecard data
+   */
+  async fetchLiveScore(matchId) {
+    try {
+      console.log(`[${this.name}] 📊 Fetching scorecard for match ${matchId}...`);
+      
+      const data = await this.makeRequest('/matches/get-scorecard', {
+        matchId: matchId
+      });
+
+      if (!data || !data.scorecard) {
+        console.log(`[${this.name}] ⚠️  No scorecard data in response`);
+        return null;
+      }
+
+      console.log(`[${this.name}] ✅ Fetched scorecard with ${data.scorecard.length} innings`);
+      
+      // Return normalized scorecard
+      return {
+        matchId,
+        scorecard: data.scorecard,
+        isMatchComplete: data.isMatchComplete || false,
+        status: data.status || 'Unknown',
+        metadata: {
+          appIndex: data.appIndex,
+          responseLastUpdated: data.responseLastUpdated
+        }
+      };
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Failed to fetch scorecard for match ${matchId}:`, error.message);
+      throw error;
+    }
+  }
+
   // Placeholder methods (not used for this provider)
   async fetchMatches() { return []; }
-  async fetchMatchesBySeries() { return []; }
   async fetchMatchDetails() { throw new Error('Not implemented'); }
-  async fetchLiveScore() { throw new Error('Not implemented'); }
   async getPlayerStats() { throw new Error('Use RapidAPI Cricbuzz for stats'); }
 }
 

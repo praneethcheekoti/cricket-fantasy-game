@@ -69,8 +69,7 @@ export default function CreateTournamentPage() {
       fielding: {
         catch: 10,
         runOut: 15,
-        stumping: 15,
-        directHit: 5
+        stumping: 15
       },
       captain: {
         enabled: true,
@@ -463,6 +462,91 @@ export default function CreateTournamentPage() {
                         />
                       </div>
                     </div>
+
+                    {/* Strike Rate Bonus */}
+                    <div className="mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <Label>Strike Rate Bonus</Label>
+                        <Switch
+                          checked={formData.scoring.batting.strikeRateBonus.enabled}
+                          onCheckedChange={(checked) => setFormData(prev => ({
+                            ...prev,
+                            scoring: {
+                              ...prev.scoring,
+                              batting: {
+                                ...prev.scoring.batting,
+                                strikeRateBonus: { ...prev.scoring.batting.strikeRateBonus, enabled: checked }
+                              }
+                            }
+                          }))}
+                        />
+                      </div>
+                      {formData.scoring.batting.strikeRateBonus.enabled && (
+                        <div className="space-y-3">
+                          {formData.scoring.batting.strikeRateBonus.ranges.map((range: any, index: number) => (
+                            <div key={index} className="grid grid-cols-3 gap-3 p-3 rounded-lg bg-muted/50">
+                              <Input
+                                type="number"
+                                placeholder="Min SR"
+                                value={range.min}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.batting.strikeRateBonus.ranges]
+                                  newRanges[index].min = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      batting: {
+                                        ...prev.scoring.batting,
+                                        strikeRateBonus: { ...prev.scoring.batting.strikeRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                              <Input
+                                type="number"
+                                placeholder="Max SR"
+                                value={range.max}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.batting.strikeRateBonus.ranges]
+                                  newRanges[index].max = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      batting: {
+                                        ...prev.scoring.batting,
+                                        strikeRateBonus: { ...prev.scoring.batting.strikeRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                              <Input
+                                type="number"
+                                placeholder="Points"
+                                value={range.points}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.batting.strikeRateBonus.ranges]
+                                  newRanges[index].points = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      batting: {
+                                        ...prev.scoring.batting,
+                                        strikeRateBonus: { ...prev.scoring.batting.strikeRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
 
@@ -510,6 +594,91 @@ export default function CreateTournamentPage() {
                         />
                       </div>
                     </div>
+
+                    {/* Economy Rate Bonus */}
+                    <div className="mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <Label>Economy Rate Bonus</Label>
+                        <Switch
+                          checked={formData.scoring.bowling.economyRateBonus.enabled}
+                          onCheckedChange={(checked) => setFormData(prev => ({
+                            ...prev,
+                            scoring: {
+                              ...prev.scoring,
+                              bowling: {
+                                ...prev.scoring.bowling,
+                                economyRateBonus: { ...prev.scoring.bowling.economyRateBonus, enabled: checked }
+                              }
+                            }
+                          }))}
+                        />
+                      </div>
+                      {formData.scoring.bowling.economyRateBonus.enabled && (
+                        <div className="space-y-3">
+                          {formData.scoring.bowling.economyRateBonus.ranges.map((range: any, index: number) => (
+                            <div key={index} className="grid grid-cols-3 gap-3 p-3 rounded-lg bg-muted/50">
+                              <Input
+                                type="number"
+                                placeholder="Min ER"
+                                value={range.min}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.bowling.economyRateBonus.ranges]
+                                  newRanges[index].min = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      bowling: {
+                                        ...prev.scoring.bowling,
+                                        economyRateBonus: { ...prev.scoring.bowling.economyRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                              <Input
+                                type="number"
+                                placeholder="Max ER"
+                                value={range.max}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.bowling.economyRateBonus.ranges]
+                                  newRanges[index].max = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      bowling: {
+                                        ...prev.scoring.bowling,
+                                        economyRateBonus: { ...prev.scoring.bowling.economyRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                              <Input
+                                type="number"
+                                placeholder="Points"
+                                value={range.points}
+                                onChange={(e) => {
+                                  const newRanges = [...formData.scoring.bowling.economyRateBonus.ranges]
+                                  newRanges[index].points = parseFloat(e.target.value) || 0
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    scoring: {
+                                      ...prev.scoring,
+                                      bowling: {
+                                        ...prev.scoring.bowling,
+                                        economyRateBonus: { ...prev.scoring.bowling.economyRateBonus, ranges: newRanges }
+                                      }
+                                    }
+                                  }))
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
 
@@ -544,15 +713,6 @@ export default function CreateTournamentPage() {
                           type="number"
                           value={formData.scoring.fielding.stumping}
                           onChange={(e) => updateScoring('fielding', 'stumping', Number(e.target.value))}
-                          className="h-10"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Direct Hit Bonus</Label>
-                        <Input
-                          type="number"
-                          value={formData.scoring.fielding.directHit}
-                          onChange={(e) => updateScoring('fielding', 'directHit', Number(e.target.value))}
                           className="h-10"
                         />
                       </div>

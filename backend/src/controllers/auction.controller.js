@@ -15,13 +15,36 @@ const auctionController = {
         ]
       });
 
+      // For each player, get the highest bid (latest bid) to show who's the highest bidder
+      const playersWithBidders = await Promise.all(
+        players.map(async (player) => {
+          // Get the latest/highest bid for this player
+          const latestBid = await prisma.bid.findFirst({
+            where: { playerId: player.id },
+            orderBy: { timestamp: 'desc' },
+            include: {
+              user: {
+                select: { id: true, name: true, email: true }
+              }
+            }
+          });
+
+          return {
+            ...player,
+            overallStats: player.overallStats ? JSON.parse(player.overallStats) : {},
+            vsOpponentStats: player.vsOpponentStats ? JSON.parse(player.vsOpponentStats) : {},
+            highestBidder: latestBid ? {
+              id: latestBid.user.id,
+              name: latestBid.user.name,
+              email: latestBid.user.email
+            } : null
+          };
+        })
+      );
+
       res.json({
         success: true,
-        data: players.map(p => ({
-          ...p,
-          overallStats: p.overallStats ? JSON.parse(p.overallStats) : {},
-          vsOpponentStats: p.vsOpponentStats ? JSON.parse(p.vsOpponentStats) : {}
-        }))
+        data: playersWithBidders
       });
     } catch (error) {
       console.error('Error fetching auction players:', error);
@@ -60,11 +83,18 @@ const auctionController = {
         return res.status(404).json({ error: 'Team not found' });
       }
 
-      // Validate bid amount
-      const minBid = player.currentPrice ? player.currentPrice + 10000000 : player.basePrice; // +10L increment
+      // Validate bid amount (must be in whole Crores, increment of 1 Cr)
+      const minBid = player.currentPrice ? player.currentPrice + 10000000 : player.basePrice; // +1 Cr increment
       if (amount < minBid) {
         return res.status(400).json({ 
           error: `Minimum bid is Rs ${minBid / 10000000} Cr` 
+        });
+      }
+      
+      // Ensure bid is in whole Crores (no decimal values)
+      if (amount % 10000000 !== 0) {
+        return res.status(400).json({ 
+          error: 'Bids must be in whole Crores (e.g., 5 Cr, 6 Cr, not 5.5 Cr)' 
         });
       }
 
@@ -128,6 +158,7 @@ const auctionController = {
       const { tournamentId, playerId } = req.params;
 
       // Get all bids for this player (playerId is unique per tournament, so we don't need to filter by tournamentId)
+      // Sort by timestamp DESC (latest bid first) so users see the most recent bids at the top
       const bids = await prisma.bid.findMany({
         where: {
           playerId
@@ -147,7 +178,7 @@ const auctionController = {
           }
         },
         orderBy: {
-          timestamp: 'asc'
+          timestamp: 'desc'
         }
       });
 
@@ -212,13 +243,76 @@ const auctionController = {
 
       if (player.status === 'sold' || player.status === 'unsold') {
         console.log(`⚠️ Player already processed (status: ${player.status})!`);
-        return res.status(400).json({ error: `Player already ${player.status}` });
+        
+        // Return consistent response format so all users get same notification
+        if (player.status === 'sold') {
+          // Player was sold - fetch the buyer information
+          const soldTeam = await prisma.team.findUnique({
+            where: { id: player.soldTo },
+            include: {
+              user: { select: { name: true } }
+            }
+          });
+          
+          console.log(`ℹ️ Player already sold to ${soldTeam?.user?.name || 'Unknown'}`);
+          
+          return res.json({
+            success: true,
+            message: `Player already sold to ${soldTeam?.user?.name || 'Unknown'}`,
+            data: {
+              playerName: player.playerName,
+              soldTo: soldTeam?.user?.name || 'Unknown',
+              price: player.currentPrice
+            }
+          });
+        } else {
+          // Player was unsold
+          console.log(`ℹ️ Player already marked as unsold`);
+          
+          return res.json({
+            success: true,
+            message: 'Player already marked as unsold',
+            data: {
+              playerName: player.playerName
+              // No soldTo field - frontend will show unsold
+            }
+          });
+        }
       }
 
       if (player.status !== 'available') {
         console.log(`⚠️ Player status is ${player.status}, not available`);
         return res.status(400).json({ error: 'Player not available for auction' });
       }
+
+      // 🛡️ LAYER 1: Anti-Snipe Protection - Check for recent bids (last 5 seconds)
+      const fiveSecondsAgo = new Date(Date.now() - 5000);
+      const recentBid = await prisma.bid.findFirst({
+        where: {
+          playerId,
+          timestamp: { gte: fiveSecondsAgo }
+        },
+        orderBy: { timestamp: 'desc' },
+        include: {
+          user: { select: { name: true } }
+        }
+      });
+
+      if (recentBid) {
+        const timeSinceBid = Date.now() - new Date(recentBid.timestamp).getTime();
+        console.log(`🛡️ ANTI-SNIPE: Recent bid detected from ${recentBid.user.name}`);
+        console.log(`   Bid placed ${timeSinceBid}ms ago (< 5000ms)`);
+        console.log(`   Timer should reset - rejecting completion request`);
+        
+        return res.status(400).json({ 
+          error: 'Recent bid detected',
+          message: 'A bid was placed in the last 5 seconds. Timer should reset.',
+          bidPlacedAt: recentBid.timestamp,
+          timeSinceBid: timeSinceBid
+        });
+      }
+
+      console.log(`✅ No recent bids in last 5 seconds - proceeding with completion`);
 
       // Get highest bid
       const highestBid = await prisma.bid.findFirst({
@@ -321,22 +415,71 @@ const auctionController = {
         }
       });
     } catch (error) {
-      // Handle duplicate detection
+      // Handle duplicate detection within transaction
       if (error.message === 'ALREADY_SOLD') {
-        console.log(`⚠️ Duplicate request detected, returning success anyway`);
-        return res.json({
-          success: true,
-          message: `Player already sold`
+        console.log(`⚠️ Duplicate request detected within transaction`);
+        
+        // Fetch player data to return consistent response format
+        const soldPlayer = await prisma.auctionPlayer.findUnique({
+          where: { id: playerId }
         });
+        
+        if (soldPlayer && soldPlayer.status === 'sold') {
+          const soldTeam = await prisma.team.findUnique({
+            where: { id: soldPlayer.soldTo },
+            include: {
+              user: { select: { name: true } }
+            }
+          });
+          
+          return res.json({
+            success: true,
+            message: `Player already sold to ${soldTeam?.user?.name || 'Unknown'}`,
+            data: {
+              playerName: soldPlayer.playerName,
+              soldTo: soldTeam?.user?.name || 'Unknown',
+              price: soldPlayer.currentPrice
+            }
+          });
+        }
       }
       
       // Handle Prisma transaction conflict (P2034) - means another request is processing
       if (error.code === 'P2034') {
-        console.log(`⚠️ Transaction conflict - another request is completing this player, returning success`);
-        return res.json({
-          success: true,
-          message: `Player auction completed by concurrent request`
+        console.log(`⚠️ Transaction conflict - another request is completing this player`);
+        
+        // Fetch player data to return consistent response format
+        const soldPlayer = await prisma.auctionPlayer.findUnique({
+          where: { id: playerId }
         });
+        
+        if (soldPlayer && soldPlayer.status === 'sold') {
+          const soldTeam = await prisma.team.findUnique({
+            where: { id: soldPlayer.soldTo },
+            include: {
+              user: { select: { name: true } }
+            }
+          });
+          
+          return res.json({
+            success: true,
+            message: `Player auction completed by concurrent request`,
+            data: {
+              playerName: soldPlayer.playerName,
+              soldTo: soldTeam?.user?.name || 'Unknown',
+              price: soldPlayer.currentPrice
+            }
+          });
+        } else if (soldPlayer && soldPlayer.status === 'unsold') {
+          return res.json({
+            success: true,
+            message: 'Player marked as unsold by concurrent request',
+            data: {
+              playerName: soldPlayer.playerName
+              // No soldTo - will show unsold
+            }
+          });
+        }
       }
       
       console.error('❌❌❌ Error completing player auction:', error);

@@ -385,6 +385,186 @@ class CricketDataProvider extends BaseCricketProvider {
     };
   }
 
+  /**
+   * Search for player by name
+   * API: GET /players?apikey={key}&offset=0&search={name}
+   * Returns: { data: [{ id, name, country }], status, info }
+   */
+  async searchPlayer(playerName) {
+    try {
+      console.log(`[${this.name}] 🔍 Searching for player: ${playerName}`);
+      
+      const data = await this.makeRequest('/players', {
+        offset: 0,
+        search: playerName
+      });
+      
+      if (!data || !data.data || data.data.length === 0) {
+        console.warn(`[${this.name}] ⚠️  No players found for: ${playerName}`);
+        return null;
+      }
+      
+      // Find closest match (exact name match or contains)
+      const exactMatch = data.data.find(p => 
+        p.name.toLowerCase() === playerName.toLowerCase()
+      );
+      
+      if (exactMatch) {
+        console.log(`[${this.name}] ✅ Found exact match: ${exactMatch.name} (ID: ${exactMatch.id})`);
+        return exactMatch;
+      }
+      
+      // If no exact match, find name that contains search term
+      const partialMatch = data.data.find(p => 
+        p.name.toLowerCase().includes(playerName.toLowerCase()) ||
+        playerName.toLowerCase().includes(p.name.toLowerCase())
+      );
+      
+      if (partialMatch) {
+        console.log(`[${this.name}] ✅ Found partial match: ${partialMatch.name} (ID: ${partialMatch.id})`);
+        return partialMatch;
+      }
+      
+      // Return first result as fallback
+      console.log(`[${this.name}] ⚠️  Using first result: ${data.data[0].name} (ID: ${data.data[0].id})`);
+      return data.data[0];
+
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Failed to search player:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch player statistics by player ID
+   * API: GET /players_info?apikey={key}&id={playerId}
+   * Returns: { data: { id, name, role, stats: [...] }, status, info }
+   */
+  async fetchPlayerStats(cricketDataPlayerId, format = 'ODI') {
+    try {
+      console.log(`[${this.name}] 📊 Fetching stats for player ID: ${cricketDataPlayerId} (format: ${format})`);
+      
+      const data = await this.makeRequest('/players_info', {
+        id: cricketDataPlayerId
+      });
+      
+      if (!data || !data.data || !data.data.stats) {
+        console.warn(`[${this.name}] ⚠️  No stats found for player ID: ${cricketDataPlayerId}`);
+        return null;
+      }
+      
+      // Normalize stats to our standard format
+      return this.normalizePlayerStats(data.data, format);
+
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Failed to fetch player stats:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch player stats by name (search + fetch in one call)
+   * Main entry point for player stats retrieval
+   */
+  async fetchPlayerStatsByName(playerName, format = 'ODI') {
+    try {
+      console.log(`[${this.name}] 📊 Fetching ${format} stats for: ${playerName}`);
+      
+      // Step 1: Search for player to get CricketData ID
+      const playerInfo = await this.searchPlayer(playerName);
+      
+      if (!playerInfo || !playerInfo.id) {
+        console.warn(`[${this.name}] ⚠️  Could not find player ID for: ${playerName}`);
+        return null;
+      }
+      
+      // Step 2: Fetch stats using CricketData ID
+      const stats = await this.fetchPlayerStats(playerInfo.id, format);
+      
+      if (stats) {
+        console.log(`[${this.name}] ✅ Retrieved ${format} stats for: ${playerName}`);
+        // Add player ID to stats for saving
+        stats.cricketDataPlayerId = playerInfo.id;
+      }
+      
+      return stats;
+
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Failed to fetch stats for ${playerName}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Normalize CricketData player stats to our standard format
+   * Parses flat array format: [{ fn, matchtype, stat, value }, ...]
+   * Into structured: { batting: {}, bowling: {}, format, fielding: {} }
+   */
+  normalizePlayerStats(playerData, format = 'ODI') {
+    try {
+      const stats = playerData.stats || [];
+      const matchtype = format.toLowerCase(); // 'odi', 'test', 't20'
+      
+      // Filter stats for the specific format and function (batting/bowling)
+      const battingStats = stats.filter(s => 
+        s.fn === 'batting' && s.matchtype === matchtype
+      );
+      const bowlingStats = stats.filter(s => 
+        s.fn === 'bowling' && s.matchtype === matchtype
+      );
+      
+      // Helper to parse stat value (trim spaces, convert to number if possible)
+      const parseStat = (statArray, statName) => {
+        const statObj = statArray.find(s => s.stat.trim() === statName);
+        if (!statObj) return 0;
+        const value = statObj.value.trim();
+        const num = parseFloat(value);
+        return isNaN(num) ? 0 : num;
+      };
+      
+      // Build normalized structure (matching CrickkAPI field names for consistency)
+      return {
+        batting: {
+          matches: parseStat(battingStats, 'm'),
+          innings: parseStat(battingStats, 'inn'),
+          notOuts: parseStat(battingStats, 'no'),
+          runs: parseStat(battingStats, 'runs'),
+          highestScore: parseStat(battingStats, 'hs'),
+          average: parseStat(battingStats, 'avg'),
+          ballsFaced: parseStat(battingStats, 'bf'),
+          strikeRate: parseStat(battingStats, 'sr'),
+          centuries: parseStat(battingStats, '100'),
+          halfCenturies: parseStat(battingStats, '50'),  // Match CrickkAPI field name
+          ducks: 0,  // Not available in CricketData API
+          fours: parseStat(battingStats, '4s'),
+          sixes: parseStat(battingStats, '6s')
+        },
+        bowling: {
+          matches: parseStat(bowlingStats, 'm'),
+          innings: parseStat(bowlingStats, 'inn'),
+          balls: parseStat(bowlingStats, 'b'),
+          runs: parseStat(bowlingStats, 'runs'),
+          wickets: parseStat(bowlingStats, 'wkts'),
+          average: parseStat(bowlingStats, 'avg'),
+          economy: parseStat(bowlingStats, 'econ'),
+          strikeRate: parseStat(bowlingStats, 'sr'),
+          fiveWickets: parseStat(bowlingStats, '5w'),
+          tenWickets: parseStat(bowlingStats, '10w')
+        },
+        format: format, // Store which format these stats are for
+        fielding: {
+          catches: 0, // Not in API response
+          stumpings: 0, // Not in API response
+          runOuts: 0 // Not in API response
+        }
+      };
+
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Error normalizing player stats:`, error.message);
+      return null;
+    }
+  }
+
   // ========================================
   // HELPER METHODS
   // ========================================

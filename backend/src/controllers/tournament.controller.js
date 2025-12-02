@@ -46,12 +46,14 @@ const tournamentController = {
       // Get default rules or use provided ones
       const rules = scoringRules || getDefaultScoringRules();
 
-      // Create tournament
+      // Create tournament - store apiSeriesId so it never expires
       const tournament = await prisma.tournament.create({
         data: {
           name,
           code,
           seriesId,
+          apiSeriesId: series.apiSeriesId,  // Store API ID permanently
+          seriesName: series.name,           // Store series name
           format, // Store selected format
           creatorId: userId,
           bidTimer: bidTimer || 30, // Default to 30 seconds if not provided
@@ -81,6 +83,75 @@ const tournamentController = {
           walletBalance: tournament.walletAmount
         }
       });
+
+      // 🆕 NEW: Fetch and save matches during tournament creation
+      console.log(`\n🏏 [Tournament Creation] Fetching matches for series...`);
+      try {
+        const allMatches = await cricketApiService.getMatchesBySeries(series.apiSeriesId);
+        
+        if (allMatches && allMatches.length > 0) {
+          console.log(`   ✅ Found ${allMatches.length} total matches from API`);
+          
+          // Filter matches by tournament format
+          const matches = allMatches.filter(match => {
+            const matchFormat = match.format || match.matchType || '';
+            return matchFormat.toLowerCase().includes(format.toLowerCase());
+          });
+          
+          console.log(`   🔍 Filtered to ${matches.length} ${format} matches`);
+          
+          // Save matches to database
+          let savedCount = 0;
+          for (let i = 0; i < matches.length; i++) {
+            const apiMatch = matches[i];
+            
+            // Extract matchDesc from metadata if available
+            let matchDesc = null;
+            if (apiMatch.metadata) {
+              try {
+                const metadata = typeof apiMatch.metadata === 'string' 
+                  ? JSON.parse(apiMatch.metadata) 
+                  : apiMatch.metadata;
+                matchDesc = metadata.matchDesc || null;
+              } catch (e) {
+                // Ignore metadata parse errors
+              }
+            }
+            
+            // Check if match already exists
+            const existingMatch = await prisma.match.findFirst({
+              where: { externalMatchId: apiMatch.apiMatchId }
+            });
+            
+            if (!existingMatch) {
+              await prisma.match.create({
+                data: {
+                  seriesId: tournament.seriesId,
+                  matchNumber: i + 1,
+                  matchDesc: matchDesc,
+                  team1: apiMatch.team1,
+                  team2: apiMatch.team2,
+                  venue: apiMatch.venue || 'TBD',
+                  matchDate: apiMatch.date || new Date(),
+                  format: apiMatch.format || format,
+                  status: apiMatch.status || 'upcoming',
+                  externalMatchId: apiMatch.apiMatchId
+                }
+              });
+              savedCount++;
+            }
+          }
+          
+          console.log(`   ✅ Saved ${savedCount} matches to database`);
+        } else {
+          console.log(`   ⚠️  No matches found for series (may be too early)`);
+        }
+      } catch (matchError) {
+        // Don't fail tournament creation if match fetching fails
+        console.error(`   ⚠️  Failed to fetch matches:`, matchError.message);
+        console.log(`   Tournament created successfully, but matches not loaded`);
+        console.log(`   User can load them later from Match Center`);
+      }
 
       res.status(201).json({
         success: true,
@@ -225,6 +296,11 @@ const tournamentController = {
         const series = await prisma.seriesCache.findUnique({
           where: { id: tournament.seriesId }
         });
+        console.log(`[Tournament Controller] Series lookup for ID ${tournament.seriesId}:`);
+        console.log(`   Found: ${series ? 'YES' : 'NO'}`);
+        if (series) {
+          console.log(`   Name: ${series.name}, API ID: ${series.apiSeriesId}`);
+        }
         tournament.series = series;
       }
 
@@ -592,6 +668,110 @@ const tournamentController = {
     } catch (error) {
       console.error('Error fetching leaderboard:', error);
       res.status(500).json({ error: 'Failed to fetch leaderboard' });
+    }
+  },
+
+  /**
+   * Get all participants in a tournament (for dropdown)
+   */
+  async getTournamentParticipants(req, res) {
+    try {
+      const { tournamentId } = req.params;
+
+      const participants = await prisma.team.findMany({
+        where: { tournamentId },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          }
+        },
+        orderBy: {
+          user: { name: 'asc' }
+        }
+      });
+
+      res.json({
+        success: true,
+        data: participants.map(p => ({
+          userId: p.user.id,
+          userName: p.user.name,
+          userEmail: p.user.email,
+          teamId: p.id,
+          teamName: p.name
+        }))
+      });
+    } catch (error) {
+      console.error('[Tournament Controller] Error fetching participants:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to fetch participants'
+      });
+    }
+  },
+
+  /**
+   * Get match-wise breakdown for a specific user
+   */
+  async getMatchWiseBreakdown(req, res) {
+    try {
+      const { tournamentId, matchId } = req.params;
+      const { userId } = req.query; // Get userId from query param (optional)
+      const currentUserId = req.userId; // From auth middleware
+      
+      // Use provided userId or default to current user
+      const targetUserId = userId || currentUserId;
+
+      console.log(`[Tournament Controller] Match-wise breakdown:`);
+      console.log(`   Tournament: ${tournamentId}`);
+      console.log(`   Match: ${matchId}`);
+      console.log(`   User: ${targetUserId}`);
+
+      const breakdown = await leaderboardService.getMatchWiseBreakdown(
+        tournamentId,
+        matchId,
+        targetUserId
+      );
+
+      res.json({
+        success: true,
+        data: breakdown
+      });
+    } catch (error) {
+      console.error('[Tournament Controller] Error fetching match-wise breakdown:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to fetch match-wise breakdown'
+      });
+    }
+  },
+
+  /**
+   * Get overall standings with current user stats
+   */
+  async getOverallStandings(req, res) {
+    try {
+      const { tournamentId } = req.params;
+      const userId = req.userId; // From auth middleware (corrected)
+
+      console.log(`[Tournament Controller] Overall standings:`);
+      console.log(`   Tournament: ${tournamentId}`);
+      console.log(`   User: ${userId}`);
+
+      const standings = await leaderboardService.getOverallStandings(
+        tournamentId,
+        userId
+      );
+
+      res.json({
+        success: true,
+        data: standings
+      });
+    } catch (error) {
+      console.error('[Tournament Controller] Error fetching overall standings:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to fetch overall standings'
+      });
     }
   }
 };

@@ -229,7 +229,7 @@ export default function TournamentLobbyPage() {
             <div>
               <h2 className="text-4xl font-bold mb-2">{tournament?.name}</h2>
               <p className="text-muted-foreground text-lg">
-                {tournament?.series?.name} ({tournament?.series?.format} - {tournament?.series?.gender})
+                {tournament?.seriesName || tournament?.series?.name} ({tournament?.format || tournament?.series?.format}{tournament?.series?.gender ? ` - ${tournament?.series?.gender}` : ''})
               </p>
             </div>
             <Badge className="text-lg px-4 py-2 bg-accent/10 text-accent border-accent/20 capitalize">
@@ -325,6 +325,25 @@ export default function TournamentLobbyPage() {
                           <span className="font-bold text-game-danger">{tournament?.battingRules?.duck}</span>
                         </div>
                       </div>
+
+                      {/* Strike Rate Bonus */}
+                      {tournament?.battingRules?.strikeRateBonus?.enabled && (
+                        <div className="mt-4">
+                          <h4 className="text-sm font-semibold mb-3 text-primary">Strike Rate Bonus (min 10 balls)</h4>
+                          <div className="space-y-2">
+                            {tournament.battingRules.strikeRateBonus.ranges?.map((range: any, index: number) => (
+                              <div key={index} className="flex justify-between items-center p-3 rounded-lg bg-primary/5 border border-primary/20">
+                                <span className="text-sm text-muted-foreground">
+                                  SR {range.min} - {range.max}
+                                </span>
+                                <span className={`font-bold text-sm ${range.points > 0 ? 'text-game-success' : range.points < 0 ? 'text-game-danger' : 'text-muted-foreground'}`}>
+                                  {range.points > 0 ? '+' : ''}{range.points} pts
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </AccordionContent>
                   </AccordionItem>
 
@@ -354,6 +373,25 @@ export default function TournamentLobbyPage() {
                           <span className="font-bold text-secondary">{tournament?.bowlingRules?.fiveWicketHaul}</span>
                         </div>
                       </div>
+
+                      {/* Economy Rate Bonus */}
+                      {tournament?.bowlingRules?.economyRateBonus?.enabled && (
+                        <div className="mt-4">
+                          <h4 className="text-sm font-semibold mb-3 text-secondary">Economy Rate Bonus (min 2 overs)</h4>
+                          <div className="space-y-2">
+                            {tournament.bowlingRules.economyRateBonus.ranges?.map((range: any, index: number) => (
+                              <div key={index} className="flex justify-between items-center p-3 rounded-lg bg-secondary/5 border border-secondary/20">
+                                <span className="text-sm text-muted-foreground">
+                                  Economy {range.min} - {range.max}
+                                </span>
+                                <span className={`font-bold text-sm ${range.points > 0 ? 'text-game-success' : range.points < 0 ? 'text-game-danger' : 'text-muted-foreground'}`}>
+                                  {range.points > 0 ? '+' : ''}{range.points} pts
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </AccordionContent>
                   </AccordionItem>
 
@@ -377,10 +415,6 @@ export default function TournamentLobbyPage() {
                         <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
                           <span className="text-muted-foreground">Stumpings</span>
                           <span className="font-bold text-accent">{tournament?.fieldingRules?.stumping}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 rounded-lg bg-muted/50">
-                          <span className="text-muted-foreground">Direct Hit</span>
-                          <span className="font-bold text-accent">{tournament?.fieldingRules?.directHit}</span>
                         </div>
                       </div>
                     </AccordionContent>

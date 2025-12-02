@@ -6,9 +6,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Trophy, ArrowLeft, Calendar, TrendingUp, Clock, CheckCircle2, Loader2, Activity, MapPin } from 'lucide-react'
+import { Trophy, ArrowLeft, Calendar, CheckCircle2, Loader2, Activity, Clock, MapPin, Calculator } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
 
@@ -18,46 +16,35 @@ export default function MatchCenterPage() {
   const { toast } = useToast()
   const [tournament, setTournament] = useState<any>(null)
   const [matches, setMatches] = useState<any[]>([])
-  const [selectedMatch, setSelectedMatch] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isFetchingMatches, setIsFetchingMatches] = useState(false) // Loading state for matches
+  const [isCalculating, setIsCalculating] = useState<string | null>(null) // matchId being calculated
 
   useEffect(() => {
-    fetchMatchData()
+    fetchTournamentData()
   }, [params.id])
 
-  const fetchMatchData = async () => {
+  // Auto-load matches from DB when tournament is loaded (NO API CALL)
+  useEffect(() => {
+    if (tournament && matches.length === 0 && !isLoading && !isFetchingMatches) {
+      loadMatchesFromDB()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournament])
+
+  const fetchTournamentData = async () => {
     try {
       // Fetch tournament details
-      const tournamentRes = await api.tournaments.getById(params.id as string)
-      const tournamentData = tournamentRes.data
-      setTournament(tournamentData)
-
-      // Fetch matches from the series
-      if (tournamentData.series?.apiSeriesId) {
-        const matchesRes = await api.matches.getSeriesMatches(tournamentData.series.apiSeriesId)
-        const matchesData = matchesRes.data || []
-        
-        // Add mock scores for demonstration
-        const matchesWithScores = matchesData.map((match: any, index: number) => ({
-          ...match,
-          // Mock data: First match completed, second match live, rest upcoming
-          status: index === 0 ? 'completed' : index === 1 ? 'live' : 'upcoming',
-          team1Score: index === 0 ? '250/10 (50 overs)' : index === 1 ? '150/3 (25.4 overs)' : null,
-          team2Score: index === 0 ? '200/10 (45.2 overs)' : index === 1 ? 'Yet to bat' : null,
-          result: index === 0 ? `${match.team1} won by 50 runs` : null,
-        }))
-        
-        setMatches(matchesWithScores)
-        
-        if (matchesWithScores.length > 0) {
-          setSelectedMatch(matchesWithScores[0])
-        }
-      }
+      const tournamentRes = await api.tournaments.getById(params.id as string) as { success: boolean; data: any }
+      console.log('Tournament data received:', tournamentRes.data)
+      console.log('Series object:', tournamentRes.data?.series)
+      console.log('API Series ID:', tournamentRes.data?.series?.apiSeriesId)
+      setTournament(tournamentRes.data)
     } catch (error: any) {
-      console.error('Failed to fetch match data:', error)
+      console.error('Failed to fetch tournament:', error)
       toast({
         title: 'Error',
-        description: error.message || 'Failed to load matches',
+        description: 'Failed to load tournament details',
         variant: 'destructive'
       })
     } finally {
@@ -65,24 +52,166 @@ export default function MatchCenterPage() {
     }
   }
 
-  const handleMatchSelect = (match: any) => {
-    setSelectedMatch(match)
+  // Load matches from DB (NO API CALL)
+  const loadMatchesFromDB = async () => {
+    setIsFetchingMatches(true)
+    try {
+      console.log('💾 Loading matches from database (no API call)...')
+      
+      // Call backend WITHOUT refresh parameter - returns DB data
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/tournaments/${params.id}/matches`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to load matches')
+      }
+
+      const data = await response.json()
+      console.log('✅ Matches loaded from DB:', data.data)
+      setMatches(data.data || [])
+    } catch (error: any) {
+      console.error('Failed to load matches:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load matches from database',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsFetchingMatches(false)
+    }
   }
 
-  const getMatchStatus = (match: any) => {
-    if (match.status === 'completed') return { icon: CheckCircle2, color: 'text-game-success', bg: 'bg-game-success/10', label: 'Completed' }
-    if (match.status === 'live') return { icon: Activity, color: 'text-game-danger', bg: 'bg-game-danger/10 animate-pulse', label: 'LIVE' }
-    return { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted/10', label: 'Upcoming' }
+  // Refresh matches from API (EXPLICIT API CALL)
+  const fetchMatches = async () => {
+    setIsFetchingMatches(true)
+    try {
+      console.log('🔄 Refreshing matches from API...')
+      console.log('Tournament:', tournament?.name)
+      console.log('API Series ID:', tournament?.apiSeriesId)
+      
+      // Call backend WITH refresh=true parameter - triggers API call
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/tournaments/${params.id}/matches?refresh=true`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to refresh matches')
+      }
+
+      const data = await response.json()
+      console.log('✅ Matches refreshed:', data.data)
+      console.log('   Source:', data.source || 'api')
+      
+      if (data.message) {
+        console.log('   Message:', data.message)
+      }
+      
+      setMatches(data.data || [])
+      
+      // Show success message
+      toast({
+        title: '✅ Matches Refreshed',
+        description: `Updated ${data.data?.length || 0} matches from API`,
+      })
+    } catch (error: any) {
+      console.error('Failed to fetch matches:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load matches',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsFetchingMatches(false)
+    }
   }
 
-  const formatMatchDate = (dateString: string) => {
+  const handleCalculatePoints = async (matchId: string) => {
+    try {
+      setIsCalculating(matchId)
+      console.log('Calculating points for match:', matchId)
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/tournaments/${params.id}/matches/${matchId}/calculate`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to calculate points')
+      }
+
+      const data = await response.json()
+      console.log('Calculation result:', data)
+
+      toast({
+        title: '✅ Success!',
+        description: data.data.alreadyProcessed 
+          ? 'Match was already processed'
+          : `Fantasy points calculated for ${data.data.playerCount} players`,
+      })
+
+      // Refresh match list to show updated status
+      await fetchMatches()
+    } catch (error: any) {
+      console.error('Failed to calculate points:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to calculate fantasy points',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsCalculating(null)
+    }
+  }
+
+  const getMatchStatusBadge = (match: any) => {
+    if (match.status === 'completed') {
+      return (
+        <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
+          <CheckCircle2 className="w-3 h-3 mr-1" />
+          Completed
+        </Badge>
+      )
+    }
+    if (match.status === 'live') {
+      return (
+        <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20 animate-pulse">
+          <Activity className="w-3 h-3 mr-1" />
+          LIVE
+        </Badge>
+      )
+    }
+    return (
+      <Badge variant="outline" className="bg-muted/50 text-muted-foreground">
+        <Clock className="w-3 h-3 mr-1" />
+        Upcoming
+      </Badge>
+    )
+  }
+
+  const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleDateString('en-US', { 
       month: 'short', 
       day: 'numeric', 
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      year: 'numeric' 
     })
   }
 
@@ -98,210 +227,187 @@ export default function MatchCenterPage() {
     <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/5">
       {/* Header */}
       <header className="border-b border-border/50 backdrop-blur-sm bg-background/80 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <Trophy className="h-8 w-8 text-primary" />
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">
-              Cricket Fantasy
-            </h1>
-          </Link>
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => router.back()}
+                className="hover:bg-primary/10"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                  Match Center
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  {tournament?.name} {tournament?.seriesName && `(${tournament.seriesName})`}
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={() => router.push(`/tournament/${params.id}/leaderboard`)}
+              className="bg-gradient-to-r from-primary to-secondary"
+            >
+              <Trophy className="w-4 h-4 mr-2" />
+              Leaderboard
+            </Button>
+          </div>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        <div className="flex items-center justify-between mb-6">
-          <Link href={`/tournament/${params.id}/lobby`}>
-            <Button variant="ghost">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Tournament
-            </Button>
-          </Link>
-
-          <Link href={`/tournament/${params.id}/leaderboard`}>
-            <Button variant="outline" className="border-purple-500/50">
-              <Trophy className="mr-2 h-4 w-4 text-purple-500" />
-              View Leaderboard
-            </Button>
-          </Link>
-        </div>
-
-        <div className="mb-8">
-          <h2 className="text-4xl font-bold mb-2 flex items-center gap-3">
-            <Calendar className="h-10 w-10 text-primary" />
-            Match Center
-          </h2>
-          <p className="text-muted-foreground text-lg mb-1">{tournament?.name}</p>
-          {tournament?.series && (
-            <p className="text-sm text-muted-foreground">
-              {tournament.series.name} • {tournament.series.format} • {tournament.series.gender}
-            </p>
-          )}
-        </div>
-
-        {matches.length === 0 ? (
-          <Card className="border-2 border-dashed">
-            <CardContent className="flex flex-col items-center justify-center py-16">
-              <Calendar className="h-20 w-20 text-muted-foreground mb-4" />
-              <h3 className="text-2xl font-bold mb-2">No Matches Scheduled</h3>
-              <p className="text-muted-foreground text-center max-w-md">
-                Matches for this tournament will appear here once they are scheduled in the series
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid lg:grid-cols-4 gap-6">
-            {/* Matches List */}
-            <div className="lg:col-span-1">
-              <Card className="border-2 sticky top-24">
-                <CardHeader>
-                  <CardTitle className="text-lg">Matches</CardTitle>
-                  <CardDescription>{matches.length} matches</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    {matches.map((match: any) => {
-                    const status = getMatchStatus(match)
-                    const StatusIcon = status.icon
-                    
-                    return (
-                      <button
-                        key={match.id}
-                        onClick={() => handleMatchSelect(match)}
-                        className={`w-full p-3 rounded-lg border-2 text-left transition-all ${
-                          selectedMatch?.id === match.id
-                            ? 'border-primary/50 bg-primary/5'
-                            : 'border-border hover:border-primary/20 hover:bg-muted/50'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <p className="font-semibold text-sm">Match {match.matchNumber}</p>
-                          <Badge className={`${status.bg} ${status.color} border-0 text-xs px-2 py-0`}>
-                            {status.label}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground mb-1">{match.team1} vs {match.team2}</p>
-                        <p className="text-xs text-muted-foreground">{formatMatchDate(match.matchDate)}</p>
-                      </button>
-                    )
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Match Details */}
-          <div className="lg:col-span-3 space-y-6">
-            {selectedMatch ? (
-              <>
-                {/* Match Details Card */}
-                <Card className="border-2 border-primary/20">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <CardTitle className="text-2xl">Match {selectedMatch.matchNumber}</CardTitle>
-                          <Badge className={`${getMatchStatus(selectedMatch).bg} ${getMatchStatus(selectedMatch).color} border-0 text-base px-4 py-2`}>
-                            {getMatchStatus(selectedMatch).label}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-4 text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <MapPin className="h-4 w-4" />
-                            <span className="text-sm">{selectedMatch.venue}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-4 w-4" />
-                            <span className="text-sm">{formatMatchDate(selectedMatch.matchDate)}</span>
-                          </div>
-                        </div>
-                      </div>
+      {/* Content */}
+      <main className="container mx-auto px-4 py-8">
+        <Card className="border-primary/20 shadow-xl">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-2xl">Series Matches</CardTitle>
+                <CardDescription>
+                  View all matches and calculate fantasy points
+                </CardDescription>
+              </div>
+              <Button 
+                onClick={fetchMatches}
+                variant={matches.length > 0 ? "outline" : "default"}
+                disabled={isFetchingMatches}
+              >
+                {isFetchingMatches ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Loading...
+                  </>
+                ) : matches.length > 0 ? (
+                  'Refresh Matches'
+                ) : (
+                  'View Matches'
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isFetchingMatches ? (
+              <div className="text-center py-16">
+                <div className="relative inline-block">
+                  {/* Funky Cricket Ball Loader */}
+                  <div className="w-24 h-24 mx-auto mb-6">
+                    <div className="absolute inset-0 rounded-full border-4 border-primary/20"></div>
+                    <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-primary animate-spin"></div>
+                    <div className="absolute inset-3 rounded-full bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center shadow-lg">
+                      <div className="text-white font-bold text-xs">🏏</div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    {selectedMatch.status === 'upcoming' ? (
-                      <div className="text-center py-12">
-                        <Clock className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
-                        <p className="text-xl font-semibold mb-2">Match Scheduled</p>
-                        <p className="text-muted-foreground">
-                          {selectedMatch.team1} vs {selectedMatch.team2}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-2">
-                          Starts: {formatMatchDate(selectedMatch.matchDate)}
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="grid md:grid-cols-2 gap-6 mb-6">
-                          <div className="p-6 rounded-xl bg-primary/5 border-2 border-primary/20">
-                            <p className="text-sm text-muted-foreground mb-2">{selectedMatch.team1}</p>
-                            <p className="text-4xl font-bold text-primary">{selectedMatch.team1Score || 'TBD'}</p>
+                  </div>
+                </div>
+                <h3 className="text-xl font-semibold mb-2 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                  {matches.length > 0 ? 'Refreshing Matches' : 'Loading Matches'}
+                </h3>
+                <p className="text-muted-foreground animate-pulse">
+                  {matches.length > 0 ? 'Syncing with API for latest updates...' : 'Loading saved match data...'}
+                </p>
+                <div className="mt-6 flex items-center justify-center gap-2">
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+              </div>
+            ) : matches.length === 0 ? (
+              <div className="text-center py-12">
+                <Calendar className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">
+                  Click "View Matches" to load matches from the series
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {matches.map((match) => (
+                  <Card key={match.id} className="border-border/50 hover:border-primary/50 transition-colors">
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between">
+                        {/* Match Info */}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-3">
+                            {getMatchStatusBadge(match)}
+                            {match.date && (
+                              <div className="flex items-center text-sm text-muted-foreground">
+                                <Calendar className="w-4 h-4 mr-1" />
+                                {formatDate(match.date)}
+                              </div>
+                            )}
+                            {match.venue && (
+                              <div className="flex items-center text-sm text-muted-foreground">
+                                <MapPin className="w-4 h-4 mr-1" />
+                                {match.venue}
+                              </div>
+                            )}
                           </div>
-                          <div className="p-6 rounded-xl bg-secondary/5 border-2 border-secondary/20">
-                            <p className="text-sm text-muted-foreground mb-2">{selectedMatch.team2}</p>
-                            <p className="text-4xl font-bold text-secondary">{selectedMatch.team2Score || 'TBD'}</p>
+
+                          {/* Teams */}
+                          <div className="space-y-2 mb-3">
+                            <h3 className="text-xl font-bold">
+                              {match.team1} vs {match.team2}
+                            </h3>
+                            {match.result && (
+                              <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                                {match.result}
+                              </p>
+                            )}
                           </div>
                         </div>
-                        {selectedMatch.result && (
-                          <div className="p-4 rounded-lg bg-game-success/10 border-2 border-game-success/20 text-center">
-                            <p className="font-bold text-game-success text-lg">{selectedMatch.result}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
 
-                {/* Info Card - Scores coming after match */}
-                {(selectedMatch.status === 'upcoming' || selectedMatch.status === 'live') && (
-                  <Card className="border-2 border-accent/20">
-                    <CardContent className="py-12 text-center">
-                      <TrendingUp className="h-12 w-12 mx-auto mb-4 text-accent" />
-                      <h3 className="text-xl font-bold mb-2">Fantasy Points</h3>
-                      <p className="text-muted-foreground">
-                        {selectedMatch.status === 'live' 
-                          ? 'Fantasy points will be calculated after the match is completed'
-                          : 'Fantasy points will be calculated based on player performance in this match'
-                        }
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
+                        {/* Action Button */}
+                        <div className="ml-4">
+                          {match.status === 'completed' && !match.isProcessed && (
+                            <Button
+                              onClick={() => handleCalculatePoints(match.id)}
+                              disabled={isCalculating === match.id}
+                              className="bg-gradient-to-r from-primary to-secondary"
+                            >
+                              {isCalculating === match.id ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  Calculating...
+                                </>
+                              ) : (
+                                <>
+                                  <Calculator className="w-4 h-4 mr-2" />
+                                  Calculate Fantasy Points
+                                </>
+                              )}
+                            </Button>
+                          )}
 
-                {/* Match Leaderboard - Show for completed matches */}
-                {selectedMatch.status === 'completed' && (
-                  <Card className="border-2">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Trophy className="h-6 w-6 text-primary" />
-                        Match Leaderboard
-                      </CardTitle>
-                      <CardDescription>Fantasy points for this match (Feature coming soon)</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-center py-8">
-                        <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                        <p className="text-muted-foreground">
-                          Player performance and fantasy points calculation will be available once match scoring is integrated
-                        </p>
+                          {match.status === 'completed' && match.isProcessed && (
+                            <div className="text-center">
+                              <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-2" />
+                              <p className="text-sm font-medium text-green-600">
+                                Fantasy Points Calculated
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {match.playerCount} players processed
+                              </p>
+                            </div>
+                          )}
+
+                          {match.status !== 'completed' && (
+                            <div className="text-center text-muted-foreground">
+                              <Clock className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                              <p className="text-xs">
+                                {match.status === 'live' ? 'Match in progress' : 'Match not started'}
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
-                )}
-              </>
-            ) : (
-              <Card className="border-2 border-dashed">
-                <CardContent className="flex flex-col items-center justify-center py-16">
-                  <Calendar className="h-16 w-16 text-muted-foreground mb-4" />
-                  <p className="text-xl font-semibold text-muted-foreground">
-                    Select a match to view details
-                  </p>
-                </CardContent>
-              </Card>
+                ))}
+              </div>
             )}
-          </div>
-        </div>
-        )}
-      </div>
+          </CardContent>
+        </Card>
+      </main>
     </div>
   )
 }

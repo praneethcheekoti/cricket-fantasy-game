@@ -316,6 +316,192 @@ const leaderboardService = {
     breakdown.finalPoints = Math.round(breakdown.basePoints * breakdown.multiplier);
 
     return breakdown;
+  },
+
+  /**
+   * Get match-wise breakdown for current user's team
+   * Shows all players with their calculated fantasy points
+   */
+  async getMatchWiseBreakdown(tournamentId, matchId, userId) {
+    try {
+      // Get user's team in this tournament
+      const team = await prisma.team.findFirst({
+        where: {
+          tournamentId,
+          userId
+        },
+        include: {
+          user: {
+            select: { name: true }
+          },
+          players: {
+            include: {
+              matchScores: {
+                where: { matchId }
+              }
+            }
+          }
+        }
+      });
+
+      if (!team) {
+        throw new Error('Team not found for this user');
+      }
+
+      // Get match details
+      const match = await prisma.match.findUnique({
+        where: { id: matchId }
+      });
+
+      // Get tournament rules for display
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      const captainRules = JSON.parse(tournament.captainRules);
+
+      // Build player breakdown
+      const players = team.players.map(player => {
+        const matchScore = player.matchScores[0]; // Should only be one per match
+
+        if (!matchScore) {
+          // Player didn't play or match not processed yet
+          return {
+            playerName: player.playerName,
+            role: player.role,
+            isCaptain: player.isCaptain,
+            isViceCaptain: player.isViceCaptain,
+            basePoints: 0,
+            multiplier: player.isCaptain ? captainRules.captainMultiplier : 
+                        player.isViceCaptain ? captainRules.viceCaptainMultiplier : 1,
+            finalPoints: 0,
+            played: false,
+            stats: null
+          };
+        }
+
+        // Calculate base points (before multiplier)
+        const finalPoints = matchScore.fantasyPoints;
+        const multiplier = player.isCaptain ? captainRules.captainMultiplier : 
+                          player.isViceCaptain ? captainRules.viceCaptainMultiplier : 1;
+        const basePoints = multiplier > 1 ? Math.round(finalPoints / multiplier) : finalPoints;
+
+        return {
+          playerName: player.playerName,
+          role: player.role,
+          isCaptain: player.isCaptain,
+          isViceCaptain: player.isViceCaptain,
+          basePoints,
+          multiplier,
+          finalPoints,
+          played: true,
+          stats: {
+            runs: matchScore.runs,
+            ballsFaced: matchScore.ballsFaced,
+            fours: matchScore.fours,
+            sixes: matchScore.sixes,
+            wickets: matchScore.wickets,
+            ballsBowled: matchScore.ballsBowled,
+            runsConceded: matchScore.runsConceded,
+            catches: matchScore.catches,
+            runOuts: matchScore.runOuts,
+            isManOfMatch: matchScore.isManOfMatch
+          }
+        };
+      });
+
+      // Calculate total points
+      const totalPoints = players.reduce((sum, p) => sum + p.finalPoints, 0);
+
+      return {
+        teamName: team.name,
+        ownerName: team.user.name,
+        match: match ? {
+          team1: match.team1,
+          team2: match.team2,
+          date: match.matchDate,
+          venue: match.venue,
+          result: match.result
+        } : null,
+        players,
+        totalPoints
+      };
+    } catch (error) {
+      console.error('[Leaderboard Service] Error getting match-wise breakdown:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get overall standings with current user stats
+   */
+  async getOverallStandings(tournamentId, userId) {
+    try {
+      // Get all teams in tournament
+      const teams = await prisma.team.findMany({
+        where: { tournamentId },
+        include: {
+          user: {
+            select: { id: true, name: true }
+          },
+          players: {
+            include: {
+              matchScores: true
+            }
+          }
+        }
+      });
+
+      // Calculate total points for each team
+      const standings = teams.map(team => {
+        const totalPoints = team.players.reduce((teamTotal, player) => {
+          const playerTotal = player.matchScores.reduce((sum, score) => sum + score.fantasyPoints, 0);
+          return teamTotal + playerTotal;
+        }, 0);
+
+        return {
+          teamId: team.id,
+          teamName: team.name,
+          ownerName: team.user.name,
+          ownerId: team.user.id,
+          totalPoints: Math.round(totalPoints),
+          playerCount: team.players.length
+        };
+      });
+
+      // Sort by points descending
+      standings.sort((a, b) => b.totalPoints - a.totalPoints);
+
+      // Add ranks
+      standings.forEach((team, index) => {
+        team.rank = index + 1;
+      });
+
+      // Find current user's stats
+      const userTeam = standings.find(t => t.ownerId === userId);
+      
+      const currentUserStats = userTeam ? {
+        rank: userTeam.rank,
+        totalPoints: userTeam.totalPoints,
+        behindLeader: standings[0].totalPoints - userTeam.totalPoints,
+        totalParticipants: teams.length,
+        teamName: userTeam.teamName
+      } : null;
+
+      return {
+        currentUser: currentUserStats,
+        standings: standings.map(s => ({
+          rank: s.rank,
+          teamName: s.teamName,
+          ownerName: s.ownerName,
+          totalPoints: s.totalPoints,
+          isCurrentUser: s.ownerId === userId
+        }))
+      };
+    } catch (error) {
+      console.error('[Leaderboard Service] Error getting overall standings:', error);
+      throw error;
+    }
   }
 };
 
