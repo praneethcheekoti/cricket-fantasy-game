@@ -41,7 +41,7 @@ export default function AuctionPage() {
   const [isPauseActionLoading, setIsPauseActionLoading] = useState(false) // Loading state for pause/unpause
   const [showCelebration, setShowCelebration] = useState(false) // Celebration modal state
   const [celebrationData, setCelebrationData] = useState<any>(null) // Data for celebration (player, buyer, price)
-  const [lastSoldPlayerId, setLastSoldPlayerId] = useState<string | null>(null) // Track last sold player to avoid duplicate celebrations
+  const [celebratedPlayerIds, setCelebratedPlayerIds] = useState<Set<string>>(new Set()) // Track ALL celebrated players to avoid duplicates
   const [isInitialLoad, setIsInitialLoad] = useState(true) // Track if this is the initial page load (to skip celebration on return)
   
   // Ref to track isBidding state for timer (avoids stale closure)
@@ -241,47 +241,53 @@ export default function AuctionPage() {
       // ONLY show celebration during polling updates, NOT on initial page load
       // This prevents the celebration from popping up when returning to the auction page
       if (!isInitialLoad) {
-        // Find the most recently sold player that we haven't celebrated yet
-        const recentlySoldPlayer = parsedPlayers.find((p: any) => 
+        // Find a sold player that we haven't celebrated yet
+        const uncelebratedSoldPlayer = parsedPlayers.find((p: any) => 
           p.status === 'sold' && 
-          p.id !== lastSoldPlayerId &&
+          !celebratedPlayerIds.has(p.id) &&
           p.soldTo // Has buyer info
         )
 
-        if (recentlySoldPlayer) {
+        if (uncelebratedSoldPlayer) {
           // Check if this is a recent sale (within last 10 seconds)
           // We estimate based on player order - if it's before current player, it's recent
-          const soldPlayerIndex = parsedPlayers.indexOf(recentlySoldPlayer)
+          const soldPlayerIndex = parsedPlayers.indexOf(uncelebratedSoldPlayer)
           const currentAvailableIndex = availablePlayers.length > 0 ? parsedPlayers.indexOf(availablePlayers[0]) : parsedPlayers.length
           
           // If sold player is within 5 positions before current, show celebration
           if (currentAvailableIndex - soldPlayerIndex <= 5 && currentAvailableIndex - soldPlayerIndex > 0) {
-            console.log('🎉 Detected recent sale during polling - showing celebration for all users')
+            console.log('🎉 Detected recent sale during polling - showing celebration for:', uncelebratedSoldPlayer.playerName)
             
             // Get buyer name
-            const buyerTeam = teamsRes.data?.find((t: any) => t.id === recentlySoldPlayer.soldTo)
+            const buyerTeam = teamsRes.data?.find((t: any) => t.id === uncelebratedSoldPlayer.soldTo)
             
             setCelebrationData({
-              playerName: recentlySoldPlayer.playerName,
+              playerName: uncelebratedSoldPlayer.playerName,
               soldTo: buyerTeam?.user?.name || 'Unknown',
-              price: recentlySoldPlayer.currentPrice
+              price: uncelebratedSoldPlayer.currentPrice
             })
             setShowCelebration(true)
-            setLastSoldPlayerId(recentlySoldPlayer.id)
+            
+            // Add to celebrated set (immutable update)
+            setCelebratedPlayerIds(prev => new Set([...prev, uncelebratedSoldPlayer.id]))
             
             // Auto-dismiss after 5 seconds
             setTimeout(() => {
               setShowCelebration(false)
             }, 5000)
+          } else {
+            // Player is too far back - add to celebrated without showing
+            setCelebratedPlayerIds(prev => new Set([...prev, uncelebratedSoldPlayer.id]))
           }
         }
       } else {
-        // On initial load, just track all already-sold players to avoid celebrating them later
+        // On initial load, track ALL already-sold players to avoid celebrating them later
         const soldPlayers = parsedPlayers.filter((p: any) => p.status === 'sold')
         if (soldPlayers.length > 0) {
-          // Set the last sold player ID to the most recent one (last in the sold list)
-          setLastSoldPlayerId(soldPlayers[soldPlayers.length - 1].id)
-          console.log('📋 Initial load - tracking', soldPlayers.length, 'already sold players, latest:', soldPlayers[soldPlayers.length - 1].playerName)
+          // Add all sold player IDs to the celebrated set
+          const soldIds = new Set(soldPlayers.map((p: any) => p.id))
+          setCelebratedPlayerIds(soldIds)
+          console.log('📋 Initial load - tracking', soldPlayers.length, 'already sold players')
         }
         // Mark initial load as complete after first fetch
         setIsInitialLoad(false)
@@ -431,7 +437,7 @@ export default function AuctionPage() {
           price: response.data.price
         })
         setShowCelebration(true)
-        setLastSoldPlayerId(currentPlayer.id) // Mark as celebrated
+        setCelebratedPlayerIds(prev => new Set([...prev, currentPlayer.id])) // Mark as celebrated
         
         // Auto-dismiss after 5 seconds and load next player
         setTimeout(() => {
