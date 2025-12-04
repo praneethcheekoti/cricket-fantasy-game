@@ -344,20 +344,20 @@ const matchController = {
             }
           });
 
-          if (!match) {
-            // Extract matchDesc from metadata if available
-            let matchDesc = null;
-            if (apiMatch.metadata) {
-              try {
-                const metadata = typeof apiMatch.metadata === 'string' 
-                  ? JSON.parse(apiMatch.metadata) 
-                  : apiMatch.metadata;
-                matchDesc = metadata.matchDesc || null;
-              } catch (e) {
-                console.warn('   ⚠️  Could not parse match metadata');
-              }
+          // Extract matchDesc from metadata if available
+          let matchDesc = null;
+          if (apiMatch.metadata) {
+            try {
+              const metadata = typeof apiMatch.metadata === 'string' 
+                ? JSON.parse(apiMatch.metadata) 
+                : apiMatch.metadata;
+              matchDesc = metadata.matchDesc || null;
+            } catch (e) {
+              console.warn('   ⚠️  Could not parse match metadata');
             }
+          }
 
+          if (!match) {
             // Create Match record for tracking
             match = await prisma.match.create({
               data: {
@@ -373,6 +373,19 @@ const matchController = {
                 externalMatchId: apiMatch.apiMatchId
               }
             });
+          } else {
+            // Update existing Match record with latest status from API
+            // This ensures status changes (upcoming → completed) are reflected in DB
+            if (match.status !== apiMatch.status && apiMatch.status) {
+              console.log(`   🔄 Updating match ${match.id} status: ${match.status} → ${apiMatch.status}`);
+              match = await prisma.match.update({
+                where: { id: match.id },
+                data: { 
+                  status: apiMatch.status,
+                  matchDesc: matchDesc || match.matchDesc // Update matchDesc if available
+                }
+              });
+            }
           }
 
           // Check if fantasy points calculated (by checking if MatchPlayerScore records exist)
