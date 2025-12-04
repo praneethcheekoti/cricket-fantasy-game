@@ -222,7 +222,7 @@ const matchController = {
         });
       }
 
-      // Step 4: Refresh mode - Fetch from API
+      // Step 4: Refresh mode - Fetch from API (bypass cache, replace old data)
       console.log(`   📡 Refresh mode: Fetching from Unofficial Cricbuzz API...`);
       console.log(`   Tournament Format: ${tournament.format}`);
 
@@ -238,7 +238,8 @@ const matchController = {
       let allMatches = [];
       
       try {
-        allMatches = await cricketApiService.getMatchesBySeries(tournament.apiSeriesId);
+        // Pass forceRefresh=true to bypass cache and get fresh data from API
+        allMatches = await cricketApiService.getMatchesBySeries(tournament.apiSeriesId, true);
         if (!allMatches || allMatches.length === 0) {
           console.log(`   ⚠️  API returned no matches, falling back to DB`);
           

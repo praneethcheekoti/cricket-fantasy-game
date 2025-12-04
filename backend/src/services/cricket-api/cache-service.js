@@ -228,6 +228,24 @@ class CacheService {
     }
   }
 
+  /**
+   * Clear all match cache entries for a specific series
+   * Used when user requests a refresh to replace stale data
+   * @param {string} apiSeriesId - API series ID
+   */
+  async clearMatchCacheForSeries(apiSeriesId) {
+    try {
+      const result = await prisma.matchCache.deleteMany({
+        where: { apiSeriesId }
+      });
+      console.log(`[Cache] 🗑️ Cleared ${result.count} cached matches for series ${apiSeriesId}`);
+      return result.count;
+    } catch (error) {
+      console.error('[Cache] Error clearing match cache for series:', error);
+      return 0;
+    }
+  }
+
   parseMatchCache(cached) {
     return {
       ...cached,

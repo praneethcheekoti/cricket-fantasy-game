@@ -196,31 +196,39 @@ class CricketApiService {
   /**
    * Get matches for a series
    * @param {string} seriesId - API series ID
+   * @param {boolean} forceRefresh - If true, bypass cache and fetch from API, then replace cache
    * @returns {Array} List of matches
    */
-  async getMatchesBySeries(seriesId) {
+  async getMatchesBySeries(seriesId, forceRefresh = false) {
     try {
       console.log(`[Cricket API] 🏏 Fetching matches for series ${seriesId}...`);
+      console.log(`[Cricket API] 🔄 Force refresh: ${forceRefresh}`);
 
-      // Check cache
-      const cached = await cacheService.getMatchesBySeriesCache(seriesId);
-      if (cached && cached.length > 0) {
-        console.log(`[Cricket API] ✅ Returning ${cached.length} matches from cache`);
-        return cached;
+      // If force refresh, skip cache and go directly to API
+      if (!forceRefresh) {
+        // Check cache
+        const cached = await cacheService.getMatchesBySeriesCache(seriesId);
+        if (cached && cached.length > 0) {
+          console.log(`[Cricket API] ✅ Returning ${cached.length} matches from cache`);
+          return cached;
+        }
+      } else {
+        console.log(`[Cricket API] 🗑️ Clearing old match cache for series ${seriesId}...`);
+        await cacheService.clearMatchCacheForSeries(seriesId);
       }
 
-      // Cache miss
+      // Cache miss or force refresh - fetch from API
       await cacheService.recordCacheMiss();
       const result = await apiSelector.executeWithFallback('match', 'fetchMatchesBySeries', [seriesId]);
 
       if (result.success && result.data) {
-        // Save each match to cache
+        // Save each match to cache (replacing old data)
         for (const match of result.data) {
           await cacheService.saveMatchCache(match, result.provider);
         }
 
         await cacheService.recordApiCall();
-        console.log(`[Cricket API] ✅ Fetched and cached ${result.data.length} matches`);
+        console.log(`[Cricket API] ✅ Fetched and cached ${result.data.length} matches from API`);
         return result.data;
       }
 
