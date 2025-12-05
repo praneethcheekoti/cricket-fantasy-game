@@ -529,15 +529,22 @@ export default function AuctionPage() {
         description: `You bid ${formatCurrency(bidInPaise)}`,
       })
       
+      // Optimistic UI update - immediately show new bid
+      setPlayers(prevPlayers => prevPlayers.map(p => 
+        p.id === currentPlayer.id 
+          ? { ...p, currentPrice: bidInPaise, highestBidder: currentUser }
+          : p
+      ))
+      
+      // Reset timer to full duration (anti-snipe)
+      setTimeRemaining(bidTimerDuration)
+      
       // Reset to next minimum bid after successful bid
       const nextMinBid = (bidInPaise + 10000000) / 10000000
       setBidAmount(nextMinBid.toString())
       
-      // Refresh auction data and bid history
-      await fetchAuctionData()
-      if (currentPlayer?.id) {
-        await fetchBidHistory(currentPlayer.id)
-      }
+      // Let polling handle the full sync (happens every 1 second anyway)
+      // This makes bid submission feel instant
     } catch (error: any) {
       toast({
         title: 'Bid failed',

@@ -15,32 +15,40 @@ const auctionController = {
         ]
       });
 
-      // For each player, get the highest bid (latest bid) to show who's the highest bidder
-      const playersWithBidders = await Promise.all(
-        players.map(async (player) => {
-          // Get the latest/highest bid for this player
-          const latestBid = await prisma.bid.findFirst({
-            where: { playerId: player.id },
-            orderBy: { timestamp: 'desc' },
-            include: {
-              user: {
-                select: { id: true, name: true, email: true }
-              }
-            }
-          });
+      // OPTIMIZED: Fetch ALL bids for this tournament in ONE query (fixes N+1 problem)
+      const playerIds = players.map(p => p.id);
+      const allBids = await prisma.bid.findMany({
+        where: { playerId: { in: playerIds } },
+        orderBy: { timestamp: 'desc' },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
+          }
+        }
+      });
 
-          return {
-            ...player,
-            overallStats: player.overallStats ? JSON.parse(player.overallStats) : {},
-            vsOpponentStats: player.vsOpponentStats ? JSON.parse(player.vsOpponentStats) : {},
-            highestBidder: latestBid ? {
-              id: latestBid.user.id,
-              name: latestBid.user.name,
-              email: latestBid.user.email
-            } : null
-          };
-        })
-      );
+      // Create a map of playerId -> latest bid (first bid in desc order)
+      const latestBidByPlayer = new Map();
+      for (const bid of allBids) {
+        if (!latestBidByPlayer.has(bid.playerId)) {
+          latestBidByPlayer.set(bid.playerId, bid);
+        }
+      }
+
+      // Map players with their bidders
+      const playersWithBidders = players.map(player => {
+        const latestBid = latestBidByPlayer.get(player.id);
+        return {
+          ...player,
+          overallStats: player.overallStats ? JSON.parse(player.overallStats) : {},
+          vsOpponentStats: player.vsOpponentStats ? JSON.parse(player.vsOpponentStats) : {},
+          highestBidder: latestBid ? {
+            id: latestBid.user.id,
+            name: latestBid.user.name,
+            email: latestBid.user.email
+          } : null
+        };
+      });
 
       res.json({
         success: true,
