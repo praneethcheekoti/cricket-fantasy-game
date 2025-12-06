@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Trophy, ArrowLeft, Gavel, Wallet, Users, ChevronRight, Loader2, TrendingUp, Target, Shield } from 'lucide-react'
+import { Trophy, ArrowLeft, Gavel, Wallet, Users, ChevronRight, Loader2, TrendingUp, Target, Shield, PieChart, X } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
 
@@ -43,6 +43,8 @@ export default function AuctionPage() {
   const [celebrationData, setCelebrationData] = useState<any>(null) // Data for celebration (player, buyer, price)
   const [celebratedPlayerIds, setCelebratedPlayerIds] = useState<Set<string>>(new Set()) // Track ALL celebrated players to avoid duplicates
   const [isInitialLoad, setIsInitialLoad] = useState(true) // Track if this is the initial page load (to skip celebration on return)
+  const [selectedTeam, setSelectedTeam] = useState<any>(null) // For Squad Details Dialog
+  const [expandedTeamIndex, setExpandedTeamIndex] = useState<number | null>(null) // For Accordion logic
   
   // Ref to track isBidding state for timer (avoids stale closure)
   const isBiddingRef = useRef(false)
@@ -216,6 +218,22 @@ export default function AuctionPage() {
           ? JSON.parse(player.vsOpponentStats)
           : player.vsOpponentStats || {}
       }))
+      
+      // 📊 Stats availability report (for debugging CricketData API issues)
+      const playersWithStats = parsedPlayers.filter((p: any) => 
+        p.overallStats && 
+        Object.keys(p.overallStats).length > 0 &&
+        (p.overallStats.batting !== undefined || p.overallStats.bowling !== undefined)
+      )
+      const playersWithoutStats = parsedPlayers.filter((p: any) => 
+        !p.overallStats || 
+        Object.keys(p.overallStats).length === 0 ||
+        (p.overallStats.batting === undefined && p.overallStats.bowling === undefined)
+      )
+      console.log(`📊 [PLAYER STATS REPORT] Total: ${parsedPlayers.length} | With Stats: ${playersWithStats.length} | Without Stats: ${playersWithoutStats.length}`)
+      if (playersWithoutStats.length > 0) {
+        console.log(`⚠️  Players missing stats:`, playersWithoutStats.map((p: any) => `${p.playerName} (${p.tier})`))
+      }
       
       setPlayers(parsedPlayers)
       
@@ -588,616 +606,434 @@ export default function AuctionPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-primary/5 to-secondary/5">
+    <div className="min-h-screen bg-gray-50/50">
       {/* Header */}
-      <header className="border-b border-border/50 backdrop-blur-sm bg-background/80 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <Trophy className="h-8 w-8 text-primary" />
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">
-              Cricket Fantasy
-            </h1>
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Trophy className="h-6 w-6 text-primary" />
+            <span className="font-bold text-xl text-primary">Cricket Fantasy</span>
+          </div>
+          <div className="h-6 w-px bg-gray-200 mx-2"></div>
+          <Link 
+            href={`/tournament/${params.id}/lobby`} 
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Lobby
           </Link>
-          <div className="flex items-center gap-4">
-            <div className="px-4 py-2 bg-accent/10 rounded-lg border border-accent/20">
+        </div>
+
+        <div className="flex items-center gap-4">
+            {/* Pause Controls */}
+            <Button
+              onClick={isPaused ? handleUnpauseAuction : handlePauseAuction}
+              variant="ghost"
+              size="sm"
+              disabled={isPauseActionLoading}
+              className={isPaused ? "text-green-600 hover:text-green-700 hover:bg-green-50" : "text-gray-500 hover:text-gray-900"}
+            >
+              {isPauseActionLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isPaused ? (
+                <span className="flex items-center gap-2">▶️ Resume</span>
+              ) : (
+                <span className="flex items-center gap-2">Pause</span>
+              )}
+            </Button>
+
+            <div className="px-4 py-2 bg-orange-50 rounded-lg border border-orange-100">
               <div className="flex items-center gap-2">
-                <Wallet className="h-5 w-5 text-accent" />
-                <span className="font-bold text-accent">{formatCurrency(walletBalance)}</span>
+                <Wallet className="h-4 w-4 text-orange-600" />
+                <span className="font-bold text-orange-700">{formatCurrency(walletBalance)}</span>
               </div>
             </div>
-          </div>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8">
-        <Link href={`/tournament/${params.id}/lobby`}>
-          <Button variant="ghost" className="mb-6">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Lobby
-          </Button>
-        </Link>
-
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Left - Current Player Auction */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Gavel className="h-6 w-6 text-primary" />
-                <h2 className="text-3xl font-bold">Live Auction</h2>
-                {isPaused && (
-                  <Badge className="ml-3 text-sm px-3 py-1 bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
-                    ⏸️ PAUSED
-                  </Badge>
-                )}
+      <div className="h-[calc(100vh-65px)] p-4 overflow-hidden">
+        <div className="grid grid-cols-12 gap-4 h-full">
+          
+          {/* LEFT SIDEBAR - Queue (2 Cols - 16.7%) */}
+          <div className="col-span-2 flex flex-col gap-3 h-full min-w-0 overflow-hidden">
+            {/* Next Up (Top ~65%) */}
+            <Card className="h-[65%] flex flex-col min-h-0 border-0 shadow-sm bg-white ring-1 ring-gray-100">
+              <div className="px-3 pt-1.5 pb-1 border-b border-gray-100 bg-white shrink-0">
+                <h3 className="text-[10px] font-bold text-gray-700 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Users className="h-3 w-3 text-primary" /> Next Up
+                </h3>
               </div>
-              
-              {/* Pause/Unpause Button */}
-              <Button
-                onClick={isPaused ? handleUnpauseAuction : handlePauseAuction}
-                variant={isPaused ? "default" : "outline"}
-                size="sm"
-                disabled={isPauseActionLoading}
-                className={isPaused ? "bg-green-600 hover:bg-green-700" : ""}
-              >
-                {isPauseActionLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : isPaused ? (
-                  <>▶️ Resume Auction</>
-                ) : (
-                  <>⏸️ Pause Auction</>
+              <CardContent className="flex-1 overflow-y-auto px-1 pt-1 pb-1 space-y-1 scrollbar-thin min-h-0 bg-gray-50/30">
+                {upcomingPlayers.length > 0 ? upcomingPlayers.map((player: any) => (
+                  <div key={player.id} className="flex items-center gap-2 p-1.5 rounded-lg border border-gray-100 bg-white hover:border-gray-200 transition-all">
+                    {/* Avatar/Icon */}
+                    <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
+                      <Users className="h-3.5 w-3.5 text-gray-400" />
+                    </div>
+                    
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-gray-900 truncate leading-tight">{player.playerName}</p>
+                      <p className="text-[9px] text-gray-500 capitalize truncate leading-tight">{player.role}</p>
+                    </div>
+                    
+                    {/* Tier Badge */}
+                    <Badge variant="secondary" className="shrink-0 text-[8px] h-4 px-1 bg-gray-100 text-gray-600 font-medium border-gray-200">
+                      Tier {player.tier}
+                    </Badge>
+                  </div>
+                )) : (
+                  <div className="text-center py-8 text-gray-400 text-xs">No upcoming players</div>
                 )}
-              </Button>
-            </div>
+              </CardContent>
+            </Card>
 
-            {currentPlayer ? (
-              <Card className="border-2 border-primary/20 shadow-2xl">
-                <CardHeader className="pb-4">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <CardTitle className="text-3xl mb-2">{currentPlayer.playerName}</CardTitle>
-                      <div className="flex items-center gap-3">
-                        <Badge className="text-base px-3 py-1 bg-secondary/10 text-secondary border-secondary/20 capitalize">
-                          {currentPlayer.role}
-                        </Badge>
-                        <Badge className="text-base px-3 py-1 bg-accent/10 text-accent border-accent/20">
-                          Tier {currentPlayer.tier}
-                        </Badge>
-                        <Badge className="text-base px-3 py-1 bg-primary/10 text-primary border-primary/20">
-                          Base: {formatCurrency(currentPlayer.basePrice)}
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="w-24 h-24 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                      <Users className="h-12 w-12 text-white" />
-                    </div>
+            {/* Unsold (Bottom ~35% minus gap) */}
+            <Card className="flex-1 flex flex-col min-h-0 border-0 shadow-sm bg-white ring-1 ring-gray-100">
+              <div className="px-3 pt-1.5 pb-1 border-b border-gray-100 bg-white shrink-0">
+                <h3 className="text-[10px] font-bold text-gray-700 flex items-center gap-1.5 uppercase tracking-wider">
+                  <Shield className="h-3 w-3 text-gray-400" /> Unsold ({unsoldPlayers.length})
+                </h3>
+              </div>
+              <CardContent className="flex-1 overflow-y-auto p-1 pt-1 space-y-1 scrollbar-thin min-h-0">
+                {unsoldPlayers.map((player: any) => (
+                  <div key={player.id} className="flex items-center justify-between p-1.5 rounded bg-gray-50 border border-gray-100 hover:bg-gray-100 transition-colors">
+                    <span className="text-[11px] font-medium text-gray-600 truncate max-w-[90px] leading-none">{player.playerName}</span>
+                    <span className="text-[9px] font-mono text-gray-400 leading-none">{formatCurrency(player.basePrice)}</span>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {/* Player Stats */}
-                  <div className="space-y-2">
-                      {/* Dynamic Stats Banner */}
-                      {dynamicStats && dynamicStats.source === 'dynamic' && (
-                        <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/10 border border-primary/30">
-                          <TrendingUp className="h-4 w-4 text-primary" />
-                          <p className="text-sm font-medium text-primary">
-                            Live {dynamicStats.format} Stats Loaded
-                          </p>
-                        </div>
-                      )}
-                      
-                      {/* Loading Stats */}
-                      {isLoadingStats && (
-                        <div className="flex items-center justify-center gap-2 py-8">
-                          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                          <p className="text-sm text-muted-foreground">Loading player stats...</p>
-                        </div>
-                      )}
-
-                      {/* Display Stats */}
-                      {!isLoadingStats && (
-                        <div className="space-y-2">
-                          {(() => {
-                            // Always show stats, use dynamic stats if available, otherwise use existing stats or show zeros
-                            const stats = dynamicStats?.stats || currentPlayer.overallStats || {}
-                            return (
-                              <>
-                                {/* Matches - Full Width */}
-                                <div className="p-3 rounded-lg bg-gradient-to-r from-primary/10 to-secondary/10 border border-primary/20 text-center">
-                                  <p className="text-xs text-muted-foreground mb-0.5">Matches</p>
-                                  <p className="text-xl font-bold">{stats.batting?.matches || 0}</p>
-                                </div>
-
-                                {/* Two Column Layout: BATTING | BOWLING */}
-                                <div className="grid grid-cols-2 gap-2">
-                                  {/* BATTING Column */}
-                                  <div className="space-y-1.5">
-                                    <p className="text-xs font-semibold text-primary uppercase text-center mb-1">Batting</p>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Runs</p>
-                                      <p className="text-lg font-bold text-primary">{stats.batting?.runs || 0}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Average</p>
-                                      <p className="text-lg font-bold">{stats.batting?.average?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Strike Rate</p>
-                                      <p className="text-lg font-bold text-accent">{stats.batting?.strikeRate?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Centuries</p>
-                                      <p className="text-lg font-bold text-primary">{stats.batting?.centuries || 0}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Fifties</p>
-                                      <p className="text-lg font-bold text-primary">{stats.batting?.halfCenturies || stats.batting?.fifties || 0}</p>
-                                    </div>
-                                  </div>
-
-                                  {/* BOWLING Column */}
-                                  <div className="space-y-1.5">
-                                    <p className="text-xs font-semibold text-secondary uppercase text-center mb-1">Bowling</p>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Wickets</p>
-                                      <p className="text-lg font-bold text-secondary">{stats.bowling?.wickets || 0}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Average</p>
-                                      <p className="text-lg font-bold">{stats.bowling?.average?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Economy</p>
-                                      <p className="text-lg font-bold text-accent">{stats.bowling?.economy?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">5W Hauls</p>
-                                      <p className="text-lg font-bold text-secondary">{stats.bowling?.fiveWickets || 0}</p>
-                                    </div>
-                                    <div className="p-2 rounded bg-muted/50 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Strike Rate</p>
-                                      <p className="text-lg font-bold">{stats.bowling?.strikeRate?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                  </div>
-                                </div>
-                              </>
-                            )
-                          })()}
-                        </div>
-                      )}
-                  </div>
-
-                  {/* Timer */}
-                  {/* Paused Banner */}
-                  {isPaused && (
-                    <div className="mb-4 p-4 rounded-lg bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-2 border-yellow-500/50">
-                      <div className="flex items-center justify-center gap-3">
-                        <div className="w-16 h-16 rounded-full flex items-center justify-center bg-yellow-500/20 border-4 border-yellow-500">
-                          <span className="text-3xl">⏸️</span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-yellow-600">Auction Paused</p>
-                          <p className="text-xs text-muted-foreground">
-                            {pausedBy === currentUser?.id 
-                              ? 'You paused the auction. Click Resume to continue.' 
-                              : `Paused by ${pausedByName || 'another user'}. Waiting to resume...`
-                            }
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Timer */}
-                  {!isPaused && (
-                    <div className="mb-4 p-4 rounded-lg bg-gradient-to-r from-game-warning/20 to-game-danger/20 border-2 border-game-warning/30">
-                      <div className="flex items-center justify-center gap-3">
-                        <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-                          timeRemaining <= 10 
-                            ? 'bg-game-danger/20 border-4 border-game-danger animate-pulse' 
-                            : 'bg-game-warning/20 border-4 border-game-warning'
-                        }`}>
-                          <span className={`text-3xl font-bold ${
-                            timeRemaining <= 10 ? 'text-game-danger' : 'text-game-warning'
-                          }`}>
-                            {timeRemaining}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-muted-foreground">Time Remaining</p>
-                          <p className="text-xs text-muted-foreground">
-                            {timeRemaining <= 10 ? 'Hurry up! Auction closing soon!' : 'Place your bid now'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Current Bid */}
-                  <div className="p-6 rounded-xl bg-gradient-to-r from-primary/10 to-secondary/10 border-2 border-primary/20">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-1">Current Bid</p>
-                        <p className="text-4xl font-bold text-primary">{formatCurrency(currentBid)}</p>
-                      </div>
-                      {highestBidder && (
-                        <div className="text-right">
-                          <p className="text-sm text-muted-foreground mb-1">Highest Bidder</p>
-                          <p className="text-xl font-bold">{highestBidder.name}</p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Bid Input */}
-                    <div className="flex gap-3">
-                      <Input
-                        type="number"
-                        placeholder={isPaused ? "Auction Paused" : "Enter bid (Cr)"}
-                        value={bidAmount}
-                        onChange={(e) => setBidAmount(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !isBidding && !isPaused) {
-                            handlePlaceBid()
-                          }
-                        }}
-                        className="h-12 text-base"
-                        step="1"
-                        min={currentBid >= 0 ? ((currentBid + 10000000) / 10000000).toString() : "1"}
-                        disabled={isPaused}
-                      />
-                      <Button
-                        onClick={handlePlaceBid}
-                        size="lg"
-                        className="px-8 font-bold bg-primary hover:bg-primary/90"
-                        disabled={isBidding || isPaused}
-                      >
-                        {isBidding ? (
-                          <>
-                            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                            Bidding...
-                          </>
-                        ) : (
-                          <>
-                            <Gavel className="mr-2 h-5 w-5" />
-                            Place Bid
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Min bid: {formatCurrency(currentBid + 10000000)} • Your balance: {formatCurrency(walletBalance)}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : players.length > 0 ? (
-              <Card className="border-2 border-game-success/20 bg-gradient-to-br from-game-success/5 to-primary/5">
-                <CardContent className="flex flex-col items-center justify-center py-16">
-                  <div className="w-20 h-20 rounded-full bg-game-success/10 flex items-center justify-center mb-6">
-                    <Trophy className="h-12 w-12 text-game-success" />
-                  </div>
-                  <h2 className="text-3xl font-bold mb-2 text-game-success">Auction Completed!</h2>
-                  <p className="text-muted-foreground text-center mb-6 max-w-md">
-                    All players have been auctioned. Check your team and get ready for the matches!
-                  </p>
-                  <div className="flex gap-4">
-                    <Link href={`/tournament/${params.id}/my-team`}>
-                      <Button size="lg" className="bg-game-success hover:bg-game-success/90">
-                        <Users className="mr-2 h-5 w-5" />
-                        View My Team
-                      </Button>
-                    </Link>
-                    <Link href={`/tournament/${params.id}/lobby`}>
-                      <Button size="lg" variant="outline">
-                        <ArrowLeft className="mr-2 h-5 w-5" />
-                        Back to Lobby
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="border-2">
-                <CardContent className="flex flex-col items-center justify-center py-16">
-                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-                  <p className="text-muted-foreground">Loading auction data...</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Upcoming Players Queue */}
-            {upcomingPlayers.length > 0 && (
-              <Card className="border-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <ChevronRight className="h-5 w-5 text-secondary" />
-                    Next Up
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex gap-4 overflow-x-auto pb-2">
-                    {upcomingPlayers.map((player: any, index: number) => (
-                      <div
-                        key={player.id}
-                        className="flex-shrink-0 p-4 rounded-lg bg-muted/50 border border-border/50 w-40"
-                      >
-                        <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary to-accent flex items-center justify-center mb-3 mx-auto">
-                          <Users className="h-6 w-6 text-white" />
-                        </div>
-                        <p className="font-semibold text-sm text-center mb-1 truncate">{player.playerName}</p>
-                        <p className="text-xs text-muted-foreground text-center capitalize">{player.role}</p>
-                        <p className="text-xs text-primary text-center mt-1">Tier {player.tier}</p>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Unsold Players - Players with No Bids */}
-            {unsoldPlayers.length > 0 && (
-              <Card className="border-2 border-orange-500/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-orange-500" />
-                    Unsold Players ({unsoldPlayers.length})
-                  </CardTitle>
-                  <CardDescription>
-                    Players who received no bids
-                    {isAuctionComplete && ' - Click to bring back for re-bidding'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[300px] pr-4">
-                    <div className="space-y-2">
-                      {unsoldPlayers.map((player: any) => (
-                        <div
-                          key={player.id}
-                          className="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800"
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <p className="font-semibold text-sm">{player.playerName}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <p className="text-xs text-muted-foreground capitalize">{player.role}</p>
-                                <Badge variant="outline" className="text-xs">
-                                  Tier {player.tier}
-                                </Badge>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xs text-muted-foreground">Base Price</p>
-                              <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">
-                                {formatCurrency(player.basePrice)}
-                              </p>
-                            </div>
-                          </div>
-                          {isAuctionComplete && (
-                            <Button
-                              size="sm"
-                              className="w-full mt-2 bg-orange-500 hover:bg-orange-600 text-white"
-                              onClick={() => handleRebid(player.id, player.playerName)}
-                            >
-                              <TrendingUp className="h-4 w-4 mr-1" />
-                              Bring Back for Re-Bid
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            )}
+                ))}
+                {unsoldPlayers.length === 0 && (
+                   <div className="text-center py-4 text-gray-400 text-[10px]">No unsold players</div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Right Sidebar - Teams */}
-          <div className="space-y-6">
-            <Card className="border-2">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <Trophy className="h-5 w-5 text-primary" />
-                      Your Team
-                    </CardTitle>
-                    <CardDescription>
-                      {myTeam.length} players • {formatCurrency(walletBalance)} remaining
-                    </CardDescription>
-                  </div>
-                  {myTeam.length > 0 && (
-                    <Link href={`/tournament/${params.id}/my-team`}>
-                      <Button variant="ghost" size="sm" className="text-primary hover:text-primary hover:bg-primary/10">
-                        <Users className="h-4 w-4 mr-1" />
-                        View Full Team
-                      </Button>
-                    </Link>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[400px] pr-4">
-                  <div className="space-y-3">
-                    {myTeam.length > 0 ? (
-                      myTeam.map((player: any) => (
-                        <div
-                          key={player.id}
-                          className="p-3 rounded-lg bg-gradient-to-r from-primary/5 to-secondary/5 border border-border/50"
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <p className="font-semibold text-sm">{player.playerName}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <p className="text-xs text-muted-foreground capitalize">{player.role}</p>
-                              </div>
-                            </div>
-                            <Badge variant="outline" className="text-xs shrink-0">
-                              {formatCurrency(player.purchasePrice)}
-                            </Badge>
-                          </div>
+          {/* CENTER - Main Stage (7 Cols - 58.3%) */}
+          <div className="col-span-7 flex flex-col h-full min-w-0">
+            {currentPlayer ? (
+              <Card className="h-full border-0 shadow-sm bg-white flex flex-col overflow-hidden ring-1 ring-gray-100">
+                 {/* Top Gradient Line */}
+                 <div className="h-1 w-full bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 shrink-0"></div>
+                 
+                 <div className="p-5 flex flex-col h-full overflow-hidden">
+                    {/* Header Section */}
+                    <div className="flex justify-between items-start mb-4 shrink-0">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1.5">
+                           <Badge className="bg-indigo-50 text-indigo-700 border-indigo-100 hover:bg-indigo-100 uppercase tracking-wider text-[10px] font-bold px-2 py-0.5">
+                              {currentPlayer.role}
+                           </Badge>
+                           <Badge className="bg-purple-50 text-purple-700 border-purple-100 hover:bg-purple-100 text-[10px] font-bold px-2 py-0.5">
+                              Tier {currentPlayer.tier}
+                           </Badge>
+                           {!isPaused && (
+                             <Badge className="bg-green-50 text-green-600 border-green-100 animate-pulse flex items-center gap-1 text-[10px] font-bold px-2 py-0.5">
+                               <span className="relative flex h-1.5 w-1.5">
+                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+                               </span> Live
+                             </Badge>
+                           )}
+                           {isPaused && (
+                             <Badge className="bg-yellow-50 text-yellow-600 border-yellow-100 flex items-center gap-1 text-[10px] px-2 py-0.5">
+                               ⏸️ Paused
+                             </Badge>
+                           )}
                         </div>
-                      ))
+                        <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-tight">{currentPlayer.playerName}</h1>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Base Price</p>
+                        <p className="text-xl font-bold text-gray-400 opacity-60">{formatCurrency(currentPlayer.basePrice)}</p>
+                      </div>
+                    </div>
+
+                    {/* Bidding Control Bar */}
+                    <div className="bg-gray-50/80 border border-gray-200 rounded-xl p-3 mb-4 shadow-sm shrink-0">
+                       <div className="flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Current Bid</p>
+                             <div className="flex items-baseline gap-2">
+                                <span className="text-3xl font-black text-primary tracking-tight">{formatCurrency(currentBid)}</span>
+                                {highestBidder && (
+                                  <span className="text-xs text-gray-500 font-medium truncate max-w-[120px]">by {highestBidder.name}</span>
+                                )}
+                             </div>
+                          </div>
+
+                          {/* Timer Circle */}
+                          <div className="relative flex items-center justify-center px-2">
+                             <div className={`w-14 h-14 rounded-full border-[3px] flex items-center justify-center bg-white shadow-sm transition-colors duration-300 ${
+                                timeRemaining <= 10 ? 'border-red-500 text-red-600 scale-110' : 'border-gray-200 text-gray-700'
+                             }`}>
+                                <span className={`text-xl font-bold ${timeRemaining <= 10 ? 'animate-pulse' : ''}`}>{timeRemaining}</span>
+                             </div>
+                          </div>
+
+                          {/* Bid Input & Button */}
+                          <div className="flex items-center justify-end gap-2">
+                             <div className="flex flex-col items-end">
+                                <div className="relative">
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">₹</span>
+                                  <Input 
+                                    type="number" 
+                                    className="pl-6 w-28 h-10 text-base font-bold border-gray-300 focus:ring-primary focus:border-primary bg-white"
+                                    value={bidAmount}
+                                    onChange={(e) => setBidAmount(e.target.value)}
+                                    disabled={isPaused}
+                                  />
+                                </div>
+                                <span className="text-[9px] text-gray-400 mt-0.5">Min Inc: +1 Cr</span>
+                             </div>
+                             <Button 
+                                size="lg" 
+                                className="h-10 px-6 text-base font-bold bg-primary hover:bg-primary/90 shadow-md shadow-primary/20 transition-all active:scale-95"
+                                onClick={handlePlaceBid}
+                                disabled={isBidding || isPaused}
+                             >
+                                {isBidding ? <Loader2 className="h-4 w-4 animate-spin" /> : 'BID'}
+                             </Button>
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* Player Details Grid (Avatar + Stats) */}
+                    <div className="grid grid-cols-12 gap-4 flex-1 min-h-0">
+                       {/* Avatar */}
+                       <div className="col-span-5 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border border-indigo-100/50 flex items-center justify-center relative overflow-hidden group h-full max-h-[350px]">
+                          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+                          <Users className="h-24 w-24 text-indigo-200 group-hover:scale-110 transition-transform duration-500 drop-shadow-md" />
+                       </div>
+
+                       {/* Stats Card */}
+                       <Card className="col-span-7 border border-gray-200 shadow-sm bg-white flex flex-col h-full overflow-hidden">
+                          <CardHeader className="bg-gray-50/50 py-2 px-4 border-b border-gray-100 shrink-0">
+                            <div className="flex items-center justify-between">
+                              <CardTitle className="text-xs font-bold text-gray-700 flex items-center gap-1.5 uppercase tracking-wide">
+                                <TrendingUp className="h-3.5 w-3.5 text-primary" /> Performance Stats
+                              </CardTitle>
+                              {dynamicStats && dynamicStats.source === 'dynamic' && (
+                                <Badge variant="outline" className="text-[9px] border-green-200 text-green-600 bg-green-50 px-1.5 py-0">Live</Badge>
+                              )}
+                            </div>
+                          </CardHeader>
+                          <CardContent className="p-0 flex-1 overflow-y-auto scrollbar-thin">
+                            {(() => {
+                               const stats = dynamicStats?.stats || currentPlayer.overallStats || {}
+                               return (
+                                 <div className="text-sm h-full flex flex-col">
+                                    {/* Matches Header */}
+                                    <div className="px-4 py-2 flex justify-between items-center bg-gray-50/30 border-b border-gray-50 shrink-0">
+                                       <span className="text-gray-500 font-medium text-xs">Matches Played</span>
+                                       <span className="text-lg font-bold text-gray-900">{stats.batting?.matches || 0}</span>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 divide-x divide-gray-100 flex-1">
+                                       {/* Batting */}
+                                       <div className="p-3 space-y-2">
+                                          <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1 opacity-80">Batting</p>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Runs</span> <span className="font-bold text-gray-800">{stats.batting?.runs || 0}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Avg</span> <span className="font-bold text-gray-800">{stats.batting?.average?.toFixed(2) || '-'}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">SR</span> <span className="font-bold text-gray-800">{stats.batting?.strikeRate?.toFixed(2) || '-'}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">100s/50s</span> <span className="font-bold text-gray-800">{stats.batting?.centuries || 0}/{stats.batting?.halfCenturies || stats.batting?.fifties || 0}</span></div>
+                                       </div>
+                                       
+                                       {/* Bowling */}
+                                       <div className="p-3 space-y-2">
+                                          <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest mb-1 opacity-80">Bowling</p>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Wickets</span> <span className="font-bold text-gray-800">{stats.bowling?.wickets || 0}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Avg</span> <span className="font-bold text-gray-800">{stats.bowling?.average?.toFixed(2) || '-'}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Econ</span> <span className="font-bold text-gray-800">{stats.bowling?.economy?.toFixed(2) || '-'}</span></div>
+                                          <div className="flex justify-between items-center"><span className="text-xs text-gray-500">Best</span> <span className="font-bold text-gray-800">{stats.bowling?.bestFigures || '-'}</span></div>
+                                       </div>
+                                    </div>
+                                 </div>
+                               )
+                            })()}
+                          </CardContent>
+                       </Card>
+                    </div>
+                 </div>
+              </Card>
+            ) : (
+               <Card className="h-full border-0 shadow-sm bg-white flex items-center justify-center ring-1 ring-gray-100">
+                  <div className="text-center">
+                    {players.length > 0 ? (
+                      <>
+                        <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+                          <Trophy className="h-10 w-10 text-green-600" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-gray-900">Auction Completed!</h2>
+                        <p className="text-gray-500 mt-2 mb-6">All players have been auctioned.</p>
+                        <div className="flex justify-center gap-3">
+                           <Link href={`/tournament/${params.id}/my-team`}>
+                              <Button size="lg" className="bg-primary">View Final Teams</Button>
+                           </Link>
+                           <Link href={`/tournament/${params.id}/lobby`}>
+                              <Button size="lg" variant="outline">Back to Lobby</Button>
+                           </Link>
+                        </div>
+                      </>
                     ) : (
-                      <div className="text-center py-8">
-                        <Target className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground">No players yet</p>
-                        <p className="text-xs text-muted-foreground mt-1">Start bidding to build your team!</p>
+                      <div className="flex flex-col items-center">
+                         <Loader2 className="h-10 w-10 animate-spin text-primary mb-3" />
+                         <p className="text-gray-500 font-medium">Loading auction data...</p>
                       </div>
                     )}
                   </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            {/* Live Bidding History */}
-            {currentPlayer && (
-              <Card className="border-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Gavel className="h-5 w-5 text-primary" />
-                    Live Bidding
-                  </CardTitle>
-                  <CardDescription>
-                    Bid history for {currentPlayer.playerName}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[250px] pr-4">
-                    <div className="space-y-2">
-                      {bidHistory.length > 0 ? (
-                        bidHistory.map((bid: any, index: number) => (
-                          <div
-                            key={bid.id}
-                            className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-r from-primary/5 to-secondary/5 border border-border/50"
-                          >
-                            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                              <span className="text-sm font-bold text-primary">
-                                {bid.user?.name?.charAt(0).toUpperCase() || '?'}
-                              </span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-sm truncate">{bid.user?.name || 'Unknown'}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(bid.timestamp).toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
-                                  minute: '2-digit',
-                                  second: '2-digit'
-                                })}
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-primary">{formatCurrency(bid.amount)}</p>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-8">
-                          <Gavel className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                          <p className="text-sm text-muted-foreground">No bids yet</p>
-                          <p className="text-xs text-muted-foreground mt-1">Be the first to bid!</p>
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
+               </Card>
             )}
-
-            {/* Teams Wallet Balance */}
-            <Card className="border-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Wallet className="h-5 w-5 text-secondary" />
-                  Teams Purse
-                </CardTitle>
-                <CardDescription>
-                  Remaining wallet balance of all participants
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[200px] pr-4">
-                  <div className="space-y-2">
-                    {allTeams.map((team: any) => (
-                      <div
-                        key={team.id}
-                        className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-secondary/5 to-accent/5 border border-border/50"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-full bg-secondary/20 flex items-center justify-center">
-                            <span className="text-sm font-bold text-secondary">
-                              {team.user?.name?.charAt(0).toUpperCase() || '?'}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="font-semibold text-sm">{team.user?.name || 'Unknown'}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {team.players?.length || 0} players
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-bold text-secondary">{formatCurrency(team.walletBalance || 0)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            {/* Other Teams */}
-            <Card className="border-2">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Users className="h-5 w-5 text-secondary" />
-                  All Teams
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="0" className="w-full">
-                  <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${Math.min(allTeams.length, 3)}, 1fr)` }}>
-                    {allTeams.slice(0, 3).map((team: any, index: number) => (
-                      <TabsTrigger key={index} value={index.toString()} className="text-xs truncate">
-                        {team.user?.name?.split(' ')[0] || `Team ${index + 1}`}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                  {allTeams.map((team: any, index: number) => (
-                    <TabsContent key={index} value={index.toString()} className="mt-4">
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center mb-3">
-                          <p className="font-semibold">{team.user?.name}</p>
-                          <div className="text-right">
-                            <p className="text-sm text-muted-foreground">{team.players?.length || 0} players</p>
-                            <p className="text-xs text-accent">{formatCurrency(team.walletBalance || 0)}</p>
-                          </div>
-                        </div>
-                        <ScrollArea className="h-[200px]">
-                          <div className="space-y-2">
-                            {team.players && team.players.length > 0 ? (
-                              team.players.map((player: any) => (
-                                <div
-                                  key={player.id}
-                                  className="flex justify-between items-center p-2 rounded bg-muted/30 text-sm"
-                                >
-                                  <div>
-                                    <span className="font-medium">{player.playerName}</span>
-                                    <span className="text-xs text-muted-foreground ml-2 capitalize">{player.role}</span>
-                                  </div>
-                                  <span className="text-xs text-muted-foreground">{formatCurrency(player.purchasePrice)}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <p className="text-sm text-muted-foreground text-center py-4">No players yet</p>
-                            )}
-                          </div>
-                        </ScrollArea>
-                      </div>
-                    </TabsContent>
-                  ))}
-                </Tabs>
-              </CardContent>
-            </Card>
           </div>
+
+          {/* RIGHT SIDEBAR - Info (3 Cols - 25%) */}
+          <div className="col-span-3 flex flex-col gap-3 h-full min-w-0 overflow-hidden">
+             {/* Bid History (Top ~50%) */}
+             <Card className="flex-1 flex flex-col min-h-0 border-0 shadow-sm bg-white ring-1 ring-gray-100">
+                <div className="px-3 pt-1.5 pb-1 border-b border-gray-100 bg-white shrink-0">
+                   <h3 className="text-[10px] font-bold text-gray-700 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Gavel className="h-3 w-3 text-primary" /> Bid History
+                   </h3>
+                </div>
+                <CardContent className="flex-1 overflow-y-auto p-0 scrollbar-thin min-h-0">
+                   {bidHistory.length > 0 ? (
+                      <div className="divide-y divide-gray-50">
+                         {bidHistory.map((bid: any) => (
+                            <div key={bid.id} className="flex items-center justify-between p-2 hover:bg-gray-50/50 transition-colors">
+                               <div className="flex items-center gap-2">
+                                  <div className="h-6 w-6 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[9px] font-bold border border-indigo-100">
+                                     {bid.user?.name?.charAt(0).toUpperCase() || '?'}
+                                  </div>
+                                  <div className="min-w-0">
+                                     <p className="text-[11px] font-bold text-gray-900 leading-none truncate max-w-[80px]">{bid.user?.name || 'Unknown'}</p>
+                                     <p className="text-[9px] text-gray-400 mt-0.5 font-mono">
+                                        {new Date(bid.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                     </p>
+                                  </div>
+                               </div>
+                               <span className="font-bold text-primary text-[10px] bg-primary/5 px-1.5 py-0.5 rounded">{formatCurrency(bid.amount)}</span>
+                            </div>
+                         ))}
+                      </div>
+                   ) : (
+                      <div className="text-center py-12 text-gray-400 text-xs flex flex-col items-center gap-2">
+                         <Gavel className="h-8 w-8 text-gray-200" />
+                         <span>No bids yet.</span>
+                      </div>
+                   )}
+                </CardContent>
+             </Card>
+
+             {/* My Team / Standings Tabs (Bottom ~50%) */}
+             <Card className="flex-1 flex flex-col min-h-0 border-0 shadow-sm bg-white ring-1 ring-gray-100">
+                <Tabs defaultValue="my-team" className="flex-1 flex flex-col h-full">
+                   <div className="px-3 pt-1.5 pb-1 border-b border-gray-100 bg-white shrink-0">
+                      <TabsList className="w-full h-6 bg-gray-100 p-0.5 rounded-sm">
+                         <TabsTrigger value="my-team" className="flex-1 text-[10px] h-5 font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm uppercase tracking-wide">My Team</TabsTrigger>
+                         <TabsTrigger value="standings" className="flex-1 text-[10px] h-5 font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm uppercase tracking-wide">Standings</TabsTrigger>
+                      </TabsList>
+                   </div>
+                   
+                   <TabsContent value="my-team" className="flex-1 overflow-y-auto p-0 m-0 scrollbar-thin min-h-0">
+                      {myTeam.length > 0 ? (
+                         <div className="divide-y divide-gray-50">
+                            {myTeam.map((player: any) => (
+                               <div key={player.id} className="flex items-center justify-between p-2 hover:bg-gray-50/30">
+                                  <div className="flex flex-col">
+                                     <span className="text-[11px] font-bold text-gray-700 truncate max-w-[120px]">{player.playerName}</span>
+                                     <span className="text-[9px] text-gray-400 capitalize">{player.role}</span>
+                                  </div>
+                                  <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-100 text-[9px] px-1.5 py-0 h-4 font-mono">{formatCurrency(player.purchasePrice)}</Badge>
+                               </div>
+                            ))}
+                         </div>
+                      ) : (
+                         <div className="text-center py-8 text-gray-400 text-xs px-4 flex flex-col items-center gap-2">
+                            <Users className="h-8 w-8 text-gray-200" />
+                            <span>Your squad is empty.</span>
+                         </div>
+                      )}
+                   </TabsContent>
+
+                   <TabsContent value="standings" className="flex-1 overflow-y-auto p-0 m-0 scrollbar-thin min-h-0">
+                      <div className="divide-y divide-gray-50">
+                         {allTeams.map((team: any, index: number) => (
+                            <div key={index} className="group">
+                               <div 
+                                  className="flex items-center justify-between p-2 hover:bg-gray-50 cursor-pointer transition-colors"
+                                  onClick={() => setExpandedTeamIndex(expandedTeamIndex === index ? null : index)}
+                               >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                     <div className="h-5 w-5 rounded-full bg-gray-100 flex items-center justify-center text-[9px] font-bold text-gray-600 shrink-0">
+                                        {index + 1}
+                                     </div>
+                                     <div className="flex flex-col min-w-0">
+                                        <span className="text-[11px] font-bold text-gray-700 truncate max-w-[90px] flex items-center gap-1">
+                                           {team.user?.name}
+                                           <ChevronRight className={`h-3 w-3 text-gray-400 transition-transform ${expandedTeamIndex === index ? 'rotate-90' : ''}`} />
+                                        </span>
+                                        <span className="text-[9px] text-gray-400">{team.players?.length || 0} Players</span>
+                                     </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                     <span className="text-[10px] font-bold text-gray-700 bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100 font-mono">
+                                        {formatCurrency(team.walletBalance || 0)}
+                                     </span>
+                                     <Button 
+                                       variant="ghost" 
+                                       size="icon" 
+                                       className="h-6 w-6 text-gray-400 hover:text-primary hover:bg-primary/5"
+                                       onClick={(e) => {
+                                          e.preventDefault() 
+                                          e.stopPropagation() 
+                                          setSelectedTeam(team)
+                                       }}
+                                     >
+                                       <PieChart className="h-3.5 w-3.5" />
+                                     </Button>
+                                  </div>
+                               </div>
+                               
+                               {/* Expanded Squad List (Quick View) - Controlled by State */}
+                               {expandedTeamIndex === index && (
+                                  <>
+                                     {team.players && team.players.length > 0 ? (
+                                        <div className="bg-gray-50/50 border-t border-gray-100 pl-9 pr-2 py-2 animate-in slide-in-from-top-1 duration-200">
+                                           <div className="flex justify-between items-center mb-2">
+                                              <p className="text-[9px] text-gray-500 uppercase tracking-wider font-bold">Quick Squad View</p>
+                                              <p className="text-[9px] text-gray-500">Spent: {formatCurrency(team.players.reduce((sum: number, p: any) => sum + (p.purchasePrice || 0), 0))}</p>
+                                           </div>
+                                           <div className="space-y-1">
+                                              {team.players.map((p: any) => (
+                                                 <div key={p.id} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                                                    <div className="flex items-center gap-2">
+                                                       <span className="text-[10px] font-bold text-gray-700">{p.playerName}</span>
+                                                       <span className="text-[8px] px-1 py-0.5 bg-gray-100 text-gray-500 rounded uppercase tracking-wide">
+                                                          {p.role?.substring(0, 3)}
+                                                       </span>
+                                                    </div>
+                                                    <span className="text-[10px] font-mono text-gray-600">
+                                                       {formatCurrency(p.purchasePrice)}
+                                                    </span>
+                                                 </div>
+                                              ))}
+                                           </div>
+                                        </div>
+                                     ) : (
+                                        <div className="bg-gray-50/50 px-2 pb-2 border-t border-gray-50 pl-9 text-[9px] text-gray-400 italic animate-in slide-in-from-top-1 duration-200">
+                                           No players yet
+                                        </div>
+                                     )}
+                                  </>
+                               )}
+                            </div>
+                         ))}
+                      </div>
+                   </TabsContent>
+                </Tabs>
+             </Card>
+          </div>
+
         </div>
       </div>
 
@@ -1230,50 +1066,115 @@ export default function AuctionPage() {
           </div>
 
           {/* Celebration Card */}
-          <Card className="relative z-10 w-full max-w-2xl mx-4 border-4 border-primary shadow-2xl animate-in zoom-in duration-500">
+          <Card className="relative z-10 w-full max-w-2xl mx-4 border-4 border-white/20 shadow-2xl animate-in zoom-in duration-500 bg-white/10 backdrop-blur-md text-white">
             <CardContent className="p-12 text-center space-y-6">
-              {/* Main Emoji */}
-              <div className="text-8xl animate-bounce">
-                🎉
-              </div>
-
-              {/* Sold Banner */}
+              <div className="text-8xl animate-bounce">🎉</div>
               <div className="space-y-2">
-                <h2 className="text-5xl font-black bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent animate-pulse">
+                <h2 className="text-6xl font-black text-white drop-shadow-lg animate-pulse tracking-tight">
                   SOLD!
                 </h2>
               </div>
 
-              {/* Player Info */}
               <div className="space-y-4 py-6">
                 <div>
-                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Player</p>
-                  <p className="text-4xl font-bold text-primary">{celebrationData.playerName}</p>
+                  <p className="text-sm text-white/70 uppercase tracking-wide mb-2">Player</p>
+                  <p className="text-5xl font-bold text-white drop-shadow-md">{celebrationData.playerName}</p>
                 </div>
 
-                <div className="flex items-center justify-center gap-3">
-                  <div className="h-1 w-16 bg-gradient-to-r from-transparent to-primary"></div>
-                  <p className="text-xl text-muted-foreground">sold to</p>
-                  <div className="h-1 w-16 bg-gradient-to-r from-primary to-transparent"></div>
+                <div className="flex items-center justify-center gap-3 py-4">
+                  <div className="h-px w-16 bg-white/30"></div>
+                  <p className="text-xl text-white/80 italic">sold to</p>
+                  <div className="h-px w-16 bg-white/30"></div>
                 </div>
 
                 <div>
-                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Winner</p>
-                  <p className="text-4xl font-bold text-secondary">{celebrationData.soldTo}</p>
+                  <p className="text-sm text-white/70 uppercase tracking-wide mb-2">Winner</p>
+                  <p className="text-4xl font-bold text-yellow-300 drop-shadow-md">{celebrationData.soldTo}</p>
                 </div>
 
-                <div className="mt-6 p-6 rounded-xl bg-gradient-to-r from-accent/20 to-primary/20 border-2 border-accent">
-                  <p className="text-sm text-muted-foreground uppercase tracking-wide mb-2">Final Price</p>
-                  <p className="text-5xl font-black text-accent">{formatCurrency(celebrationData.price)}</p>
+                <div className="mt-8 inline-block px-8 py-4 rounded-2xl bg-white/20 border border-white/30 backdrop-blur-md">
+                  <p className="text-xs text-white/70 uppercase tracking-wide mb-1">Final Price</p>
+                  <p className="text-5xl font-black text-white">{formatCurrency(celebrationData.price)}</p>
                 </div>
-              </div>
-
-              {/* Loading indicator */}
-              <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <p className="text-sm">Loading next player...</p>
               </div>
             </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Squad Details Modal */}
+      {selectedTeam && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+          <Card className="w-full max-w-md border-0 shadow-2xl bg-[#FDFBF7] max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-200 flex items-start justify-between bg-[#FDFBF7]">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">{selectedTeam.user?.name}'s Squad</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Total Spent: {formatCurrency(selectedTeam.players?.reduce((sum: number, p: any) => sum + (p.purchasePrice || 0), 0) || 0)} | Remaining: {formatCurrency(selectedTeam.walletBalance)}
+                </p>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-8 w-8 -mt-1 -mr-1 text-gray-400 hover:text-gray-600"
+                onClick={() => setSelectedTeam(null)}
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <div className="p-4 overflow-y-auto scrollbar-thin">
+              {/* Role Counts */}
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                {[
+                  { label: 'Batsmen', icon: Target, count: selectedTeam.players?.filter((p: any) => p.role?.toLowerCase().includes('batsman')).length || 0, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+                  { label: 'Bowlers', icon: Trophy, count: selectedTeam.players?.filter((p: any) => p.role?.toLowerCase().includes('bowler')).length || 0, color: 'text-purple-600', bg: 'bg-purple-50' },
+                  { label: 'All-Rounders', icon: Users, count: selectedTeam.players?.filter((p: any) => p.role?.toLowerCase().includes('all')).length || 0, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { label: 'Wicket-Keepers', icon: Shield, count: selectedTeam.players?.filter((p: any) => p.role?.toLowerCase().includes('keeper')).length || 0, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+                ].map((role, i) => (
+                  <div key={i} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
+                    <div className={`h-10 w-10 rounded-full ${role.bg} flex items-center justify-center shrink-0`}>
+                      <role.icon className={`h-5 w-5 ${role.color}`} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-500 uppercase">{role.label}</p>
+                      <p className="text-xl font-black text-gray-900 leading-none mt-0.5">{role.count}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Player List */}
+              <div>
+                <h4 className="text-sm font-bold text-gray-900 mb-3">Player List</h4>
+                <div className="bg-[#F6F5F0] rounded-xl border border-[#EBE9E0] p-1">
+                  {selectedTeam.players && selectedTeam.players.length > 0 ? (
+                    <div className="divide-y divide-gray-200/50">
+                      {selectedTeam.players.map((player: any) => (
+                        <div key={player.id} className="flex items-center justify-between p-3 hover:bg-black/5 transition-colors rounded-lg">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-bold text-gray-800">{player.playerName}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="bg-gray-200 text-gray-600 border-transparent text-[10px] h-5 font-medium">
+                              {player.role}
+                            </Badge>
+                            <span className="text-sm font-mono font-bold text-gray-600 bg-[#EBE9E0] px-2 py-0.5 rounded">
+                              {formatCurrency(player.purchasePrice)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400 text-sm italic">
+                      No players purchased yet
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </Card>
         </div>
       )}

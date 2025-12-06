@@ -230,9 +230,9 @@ const auctionController = {
   },
 
   async completePlayerAuction(req, res) {
+    const { tournamentId, playerId } = req.params;
+    
     try {
-      const { tournamentId, playerId } = req.params;
-      
       console.log(`⏰ Complete player auction request:`);
       console.log(`   Tournament ID: ${tournamentId}`);
       console.log(`   Player ID: ${playerId}`);

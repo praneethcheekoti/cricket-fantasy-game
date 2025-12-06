@@ -33,6 +33,44 @@ export default function TournamentLobbyPage() {
     fetchTournamentDetails()
   }, [params.id])
 
+  // Auto-redirect to auction when creator starts it
+  // Poll for status change when all participants are locked
+  useEffect(() => {
+    // Only poll if status is 'locked' (waiting for creator to start)
+    if (tournament?.status !== 'locked') return
+    
+    // Check if all participants have locked
+    const allLocked = participants.length > 0 && participants.every((p: any) => p.rulesLocked)
+    if (!allLocked) return
+    
+    console.log('👀 [LOBBY] Polling for auction start...')
+    
+    const interval = setInterval(async () => {
+      try {
+        const response = await api.tournaments.getById(params.id as string)
+        
+        if (response.data.status === 'auction') {
+          console.log('🚀 [LOBBY] Auction started! Auto-redirecting to auction page...')
+          clearInterval(interval)
+          
+          toast({
+            title: '🎉 Auction Started!',
+            description: 'Redirecting you to the auction...',
+          })
+          
+          // Small delay for toast to show
+          setTimeout(() => {
+            router.push(`/tournament/${params.id}/auction`)
+          }, 500)
+        }
+      } catch (error) {
+        console.error('Error polling for auction status:', error)
+      }
+    }, 3000) // Poll every 3 seconds
+    
+    return () => clearInterval(interval)
+  }, [tournament?.status, participants, params.id, router, toast])
+
   const fetchTournamentDetails = async () => {
     try {
       const response = await api.tournaments.getById(params.id as string)

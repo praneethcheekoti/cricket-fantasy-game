@@ -1,0 +1,21 @@
+warning: in the working copy of 'backend/API_USAGE_AUDIT.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/prisma/schema.prisma', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/scripts/check-tournament-matches.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/controllers/auction.controller.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/controllers/match.controller.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/controllers/tournament.controller.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/auction.service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/cricket-api/api-selector.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/cricket-api/cache-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/cricket-api/index.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/services/cricket-api/providers/cricketdata-provider.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/app/tournament/[id]/auction/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/app/tournament/[id]/matches/page.tsx', LF will be replaced by CRLF the next time Git touches it
+ backend/PLAYER_STATS_API_FLOW.md               |  1 [32m+[m
+ backend/scripts/backfill-matches-from-cache.js |  1 [32m+[m
+ backend/scripts/fix-orphaned-matches.js        |  1 [32m+[m
+ backend/scripts/reset-api-usage.js             |  1 [32m+[m
+ backend/scripts/test-cricketdata-parsing.js    |  1 [32m+[m
+ backend/src/controllers/auction.controller.js  | 58 [32m+++++++++++++++[m[31m-----------[m
+ frontend/app/tournament/[id]/auction/page.tsx  | 17 [32m+++++[m[31m---[m
+ 7 files changed, 50 insertions(+), 30 deletions(-)
