@@ -97,98 +97,103 @@ async function deleteTournament(tournamentName) {
     // Count related data
     const teams = await prisma.team.findMany({ where: { tournamentId: tournament.id } });
     const auctionPlayers = await prisma.auctionPlayer.findMany({ where: { tournamentId: tournament.id } });
-    const bids = await prisma.bid.findMany({ 
-      where: { 
-        player: { tournamentId: tournament.id }
-      }
-    });
-    const teamPlayers = await prisma.teamPlayer.findMany({ 
-      where: { 
-        team: { tournamentId: tournament.id }
-      }
-    });
 
     console.log(`📊 Related data to be deleted:\n`);
     console.log(`   - ${tournament.participants.length} Participants`);
     console.log(`   - ${teams.length} Teams`);
-    console.log(`   - ${teamPlayers.length} Team Players`);
     console.log(`   - ${auctionPlayers.length} Auction Players`);
-    console.log(`   - ${bids.length} Bids`);
     console.log();
 
     console.log(`⚠️  WARNING: This action CANNOT be undone!\n`);
     console.log(`🗑️  Proceeding to delete...\n`);
 
-    // Delete in correct order to avoid foreign key constraints
-    await prisma.$transaction(async (tx) => {
-      // 1. Delete bids
-      if (bids.length > 0) {
-        await tx.bid.deleteMany({
-          where: {
-            player: { tournamentId: tournament.id }
-          }
-        });
-        console.log(`   ✅ Deleted ${bids.length} bids`);
-      }
+    // Get IDs for deletion
+    const teamIds = teams.map(t => t.id);
+    const auctionPlayerIds = auctionPlayers.map(ap => ap.id);
 
-      // 2. Delete match player scores (if any)
-      const matchPlayerScores = await tx.matchPlayerScore.deleteMany({
+    // Delete in correct order to avoid foreign key constraints
+    // Using separate transactions for each step to be more robust
+
+    // 1. Delete bids (they reference auction players)
+    if (auctionPlayerIds.length > 0) {
+      const deletedBids = await prisma.bid.deleteMany({
         where: {
-          teamPlayer: {
-            team: { tournamentId: tournament.id }
+          playerId: { in: auctionPlayerIds }
+        }
+      });
+      if (deletedBids.count > 0) {
+        console.log(`   ✅ Deleted ${deletedBids.count} bids`);
+      }
+    }
+
+    // 2. Delete match player scores (they reference team players)
+    if (teamIds.length > 0) {
+      const deletedScores = await prisma.matchPlayerScore.deleteMany({
+        where: {
+          teamPlayerId: {
+            in: await prisma.teamPlayer.findMany({
+              where: { teamId: { in: teamIds } },
+              select: { id: true }
+            }).then(tps => tps.map(tp => tp.id))
           }
         }
       });
-      if (matchPlayerScores.count > 0) {
-        console.log(`   ✅ Deleted ${matchPlayerScores.count} match player scores`);
+      if (deletedScores.count > 0) {
+        console.log(`   ✅ Deleted ${deletedScores.count} match player scores`);
       }
+    }
 
-      // 3. Delete team players
-      if (teamPlayers.length > 0) {
-        await tx.teamPlayer.deleteMany({
-          where: {
-            team: { tournamentId: tournament.id }
-          }
-        });
-        console.log(`   ✅ Deleted ${teamPlayers.length} team players`);
-      }
-
-      // 4. Delete teams
-      if (teams.length > 0) {
-        await tx.team.deleteMany({
-          where: { tournamentId: tournament.id }
-        });
-        console.log(`   ✅ Deleted ${teams.length} teams`);
-      }
-
-      // 5. Delete auction players
-      if (auctionPlayers.length > 0) {
-        await tx.auctionPlayer.deleteMany({
-          where: { tournamentId: tournament.id }
-        });
-        console.log(`   ✅ Deleted ${auctionPlayers.length} auction players`);
-      }
-
-      // 6. Delete participants
-      if (tournament.participants.length > 0) {
-        await tx.tournamentParticipant.deleteMany({
-          where: { tournamentId: tournament.id }
-        });
-        console.log(`   ✅ Deleted ${tournament.participants.length} participants`);
-      }
-
-      // 7. Delete tournament
-      await tx.tournament.delete({
-        where: { id: tournament.id }
+    // 3. Delete team players (they reference teams) - MUST be before teams
+    if (teamIds.length > 0) {
+      const deletedTeamPlayers = await prisma.teamPlayer.deleteMany({
+        where: {
+          teamId: { in: teamIds }
+        }
       });
-      console.log(`   ✅ Deleted tournament: ${tournament.name}`);
+      if (deletedTeamPlayers.count > 0) {
+        console.log(`   ✅ Deleted ${deletedTeamPlayers.count} team players`);
+      }
+    }
+
+    // 4. Delete teams
+    if (teamIds.length > 0) {
+      const deletedTeams = await prisma.team.deleteMany({
+        where: { id: { in: teamIds } }
+      });
+      if (deletedTeams.count > 0) {
+        console.log(`   ✅ Deleted ${deletedTeams.count} teams`);
+      }
+    }
+
+    // 5. Delete auction players
+    if (auctionPlayerIds.length > 0) {
+      const deletedAuctionPlayers = await prisma.auctionPlayer.deleteMany({
+        where: { id: { in: auctionPlayerIds } }
+      });
+      if (deletedAuctionPlayers.count > 0) {
+        console.log(`   ✅ Deleted ${deletedAuctionPlayers.count} auction players`);
+      }
+    }
+
+    // 6. Delete participants
+    const deletedParticipants = await prisma.tournamentParticipant.deleteMany({
+      where: { tournamentId: tournament.id }
     });
+    if (deletedParticipants.count > 0) {
+      console.log(`   ✅ Deleted ${deletedParticipants.count} participants`);
+    }
+
+    // 7. Delete tournament
+    await prisma.tournament.delete({
+      where: { id: tournament.id }
+    });
+    console.log(`   ✅ Deleted tournament: ${tournament.name}`);
 
     console.log(`\n🎉 Tournament "${tournament.name}" successfully deleted!\n`);
 
   } catch (error) {
-    console.error('\n❌ Error deleting tournament:', error);
-    console.error(error.stack);
+    console.error('\n❌ Error deleting tournament:', error.message);
+    console.error(error);
     process.exit(1);
   } finally {
     await prisma.$disconnect();
@@ -214,4 +219,3 @@ if (!tournamentName) {
 }
 
 deleteTournament(tournamentName);
-
