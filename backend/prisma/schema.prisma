@@ -40,7 +40,7 @@ model Tournament {
   id            String         @id @default(auto()) @map("_id") @db.ObjectId
   name          String
   code          String         @unique
-  seriesId      String
+  seriesId      String?        // Made optional - series cache may expire
   apiSeriesId   String?        // Store API series ID directly (doesn't expire)
   seriesName    String?        // Store series name for display
   format        String         @default("ODI") // "Test", "ODI", "T20"
@@ -60,11 +60,15 @@ model Tournament {
   isPaused      Boolean        @default(false) // Is auction currently paused
   pausedBy      String?        // User ID who paused the auction
   pausedAt      DateTime?      // When auction was paused
+  lastRoundUnsoldCount Int     @default(0) // Track unsold players from previous round (for detecting no-progress)
+  playerOfSeriesId String?     // Player ID selected as Player of the Series
+  playerOfSeriesName String?   // Player name for display
+  playerOfSeriesApplied Boolean @default(false) // Track if PoTS bonus has been applied
   
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   
-  series        Series         @relation(fields: [seriesId], references: [id])
+  series        Series?        @relation(fields: [seriesId], references: [id])
   participants  TournamentParticipant[]
   teams         Team[]
   auctionPlayers AuctionPlayer[]
@@ -161,6 +165,8 @@ model Match {
   format        String         // "ODI", "Test", "T20"
   status        String         @default("upcoming") // "upcoming", "live", "completed"
   externalMatchId String?      // ID from cricket API
+  manOfMatchPlayerId String?   // Player ID selected as Man of the Match
+  manOfMatchName String?       // Player name for display
   
   series        Series         @relation(fields: [seriesId], references: [id])
   playerScores  MatchPlayerScore[]

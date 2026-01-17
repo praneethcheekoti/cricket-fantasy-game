@@ -547,8 +547,8 @@ export default function TournamentLobbyPage() {
               </Card>
             )}
 
-            {/* Start/Continue/Completed Auction - For Creators */}
-            {allParticipantsLocked && isCreator && tournament?.status !== 'completed' && (
+            {/* Start/Continue Auction - For Creators (only during locked or auction phase) */}
+            {allParticipantsLocked && isCreator && (tournament?.status === 'locked' || tournament?.status === 'auction') && (
               <Card className="border-2 border-primary/20 bg-gradient-to-r from-primary/10 to-secondary/10">
                 <CardContent className="py-6">
                   <div className="flex items-center justify-between">
@@ -616,7 +616,7 @@ export default function TournamentLobbyPage() {
             )}
 
             {/* Auction Completed - Show for all participants */}
-            {tournament?.status === 'completed' && (
+            {(tournament?.status === 'completed' || tournament?.status === 'auction_complete') && (
               <>
                 <Card className="border-2 border-game-success/20 bg-gradient-to-r from-game-success/10 to-primary/10">
                   <CardContent className="py-6">

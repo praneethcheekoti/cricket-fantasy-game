@@ -210,7 +210,10 @@ const matchController = {
               format: match.format,
               status: match.status,
               externalMatchId: match.externalMatchId,
-              isProcessed: playerScores.length > 0
+              isProcessed: playerScores.length > 0,
+              playerCount: playerScores.length,
+              manOfMatchPlayerId: match.manOfMatchPlayerId,
+              manOfMatchName: match.manOfMatchName
             };
           })
         );
@@ -406,7 +409,9 @@ const matchController = {
             status: apiMatch.status,
             result: apiMatch.result || null,
             isProcessed,
-            playerCount: playerScores.length
+            playerCount: playerScores.length,
+            manOfMatchPlayerId: match.manOfMatchPlayerId,
+            manOfMatchName: match.manOfMatchName
           };
         })
       );
@@ -467,11 +472,20 @@ const matchController = {
         });
       }
 
+      // Check if Man of the Match is selected
+      if (!match.manOfMatchPlayerId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please select Man of the Match before calculating points'
+        });
+      }
+
       // Process match using scorecard processor service
       const result = await scorecardProcessorService.processMatch(
         tournamentId,
         matchId,
-        match.externalMatchId
+        match.externalMatchId,
+        match.manOfMatchPlayerId // Pass MoM player ID
       );
 
       res.json({
@@ -483,6 +497,251 @@ const matchController = {
       res.status(500).json({
         success: false,
         error: error.message || 'Failed to calculate match points'
+      });
+    }
+  },
+
+  /**
+   * Set Man of the Match for a match
+   */
+  async setManOfMatch(req, res) {
+    try {
+      const { matchId } = req.params;
+      const { playerId, playerName } = req.body;
+
+      console.log(`[Match Controller] Setting Man of Match for match ${matchId}:`);
+      console.log(`   Player ID: ${playerId}`);
+      console.log(`   Player Name: ${playerName}`);
+
+      // Get match
+      const match = await prisma.match.findUnique({
+        where: { id: matchId }
+      });
+
+      if (!match) {
+        return res.status(404).json({
+          success: false,
+          error: 'Match not found'
+        });
+      }
+
+      // Check if match is completed
+      if (match.status !== 'completed') {
+        return res.status(400).json({
+          success: false,
+          error: 'Can only set Man of Match for completed matches'
+        });
+      }
+
+      // Check if fantasy points already calculated
+      const existingScores = await prisma.matchPlayerScore.findMany({
+        where: { matchId }
+      });
+
+      if (existingScores.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot change Man of Match after fantasy points are calculated'
+        });
+      }
+
+      // Update match with MoM
+      const updatedMatch = await prisma.match.update({
+        where: { id: matchId },
+        data: {
+          manOfMatchPlayerId: playerId,
+          manOfMatchName: playerName
+        }
+      });
+
+      console.log(`[Match Controller] ✅ Man of Match set: ${playerName}`);
+
+      res.json({
+        success: true,
+        message: `Man of Match set to ${playerName}`,
+        data: {
+          matchId,
+          manOfMatchPlayerId: playerId,
+          manOfMatchName: playerName
+        }
+      });
+    } catch (error) {
+      console.error('[Match Controller] ❌ Error setting Man of Match:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to set Man of Match'
+      });
+    }
+  },
+
+  /**
+   * Set Player of the Series for a tournament
+   */
+  async setPlayerOfSeries(req, res) {
+    try {
+      const { tournamentId } = req.params;
+      const { playerId, playerName } = req.body;
+
+      console.log(`[Match Controller] Setting Player of Series for tournament ${tournamentId}:`);
+      console.log(`   Player ID: ${playerId}`);
+      console.log(`   Player Name: ${playerName}`);
+
+      // Get tournament
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          error: 'Tournament not found'
+        });
+      }
+
+      // Get all matches for this tournament's series
+      const matches = await prisma.match.findMany({
+        where: { seriesId: tournament.seriesId }
+      });
+
+      // Check if all matches are completed
+      const allCompleted = matches.every(m => m.status === 'completed');
+      if (!allCompleted) {
+        return res.status(400).json({
+          success: false,
+          error: 'Can only set Player of Series after all matches are completed'
+        });
+      }
+
+      // Update tournament with PoTS (don't apply bonus yet)
+      const updatedTournament = await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: {
+          playerOfSeriesId: playerId,
+          playerOfSeriesName: playerName
+        }
+      });
+
+      console.log(`[Match Controller] ✅ Player of Series set: ${playerName}`);
+
+      res.json({
+        success: true,
+        message: `Player of Series set to ${playerName}`,
+        data: {
+          tournamentId,
+          playerOfSeriesId: playerId,
+          playerOfSeriesName: playerName
+        }
+      });
+    } catch (error) {
+      console.error('[Match Controller] ❌ Error setting Player of Series:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to set Player of Series'
+      });
+    }
+  },
+
+  /**
+   * Apply Player of the Series bonus to all scores
+   */
+  async applyPlayerOfSeriesBonus(req, res) {
+    try {
+      const { tournamentId } = req.params;
+
+      console.log(`[Match Controller] Applying Player of Series bonus for tournament ${tournamentId}`);
+
+      // Get tournament
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        return res.status(404).json({
+          success: false,
+          error: 'Tournament not found'
+        });
+      }
+
+      if (!tournament.playerOfSeriesId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please select Player of Series first'
+        });
+      }
+
+      if (tournament.playerOfSeriesApplied) {
+        return res.status(400).json({
+          success: false,
+          error: 'Player of Series bonus has already been applied'
+        });
+      }
+
+      // Get award rules
+      const awardRules = JSON.parse(tournament.awardRules);
+      const potsBonus = awardRules.playerOfTheSeries || 100;
+
+      // Find all TeamPlayers with this playerId across all teams in this tournament
+      const teams = await prisma.team.findMany({
+        where: { tournamentId },
+        include: {
+          players: true
+        }
+      });
+
+      let updatedCount = 0;
+
+      for (const team of teams) {
+        // Find the team player matching the PoTS
+        const potsPlayer = team.players.find(p => p.playerId === tournament.playerOfSeriesId);
+        
+        if (potsPlayer) {
+          // Get all match scores for this team player
+          const matchScores = await prisma.matchPlayerScore.findMany({
+            where: { teamPlayerId: potsPlayer.id }
+          });
+
+          // Add PoTS bonus to the last match score (or first if only one)
+          if (matchScores.length > 0) {
+            // Add bonus to the last match
+            const lastScore = matchScores[matchScores.length - 1];
+            await prisma.matchPlayerScore.update({
+              where: { id: lastScore.id },
+              data: {
+                fantasyPoints: lastScore.fantasyPoints + potsBonus
+              }
+            });
+            updatedCount++;
+            console.log(`   ✅ Added ${potsBonus} PoTS bonus to ${potsPlayer.playerName} in team ${team.name}`);
+          }
+        }
+      }
+
+      // Mark as applied and set tournament status to 'completed'
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { 
+          playerOfSeriesApplied: true,
+          status: 'completed'  // Tournament is now fully complete
+        }
+      });
+
+      console.log(`[Match Controller] ✅ Player of Series bonus applied to ${updatedCount} team(s)`);
+      console.log(`[Match Controller] 🏆 Tournament status set to 'completed'`);
+
+      res.json({
+        success: true,
+        message: `Player of Series bonus (${potsBonus} points) applied to ${tournament.playerOfSeriesName}`,
+        data: {
+          playerName: tournament.playerOfSeriesName,
+          bonusPoints: potsBonus,
+          teamsUpdated: updatedCount
+        }
+      });
+    } catch (error) {
+      console.error('[Match Controller] ❌ Error applying Player of Series bonus:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to apply Player of Series bonus'
       });
     }
   }

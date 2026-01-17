@@ -14,12 +14,14 @@ const scorecardProcessorService = {
    * @param {string} tournamentId - Tournament ID
    * @param {string} matchId - Match ID (our internal MongoDB ID)
    * @param {string} apiMatchId - API Match ID for fetching scorecard
+   * @param {string} manOfMatchPlayerId - Player ID selected as Man of the Match
    */
-  async processMatch(tournamentId, matchId, apiMatchId) {
+  async processMatch(tournamentId, matchId, apiMatchId, manOfMatchPlayerId = null) {
     try {
       console.log(`\n🏏 [Scorecard Processor] Processing match: ${matchId}`);
       console.log(`   Tournament: ${tournamentId}`);
       console.log(`   API Match ID: ${apiMatchId}`);
+      console.log(`   Man of Match Player ID: ${manOfMatchPlayerId || 'Not set'}`);
 
       // Step 1: Check if already processed
       const existingScores = await prisma.matchPlayerScore.findMany({
@@ -93,15 +95,23 @@ const scorecardProcessorService = {
 
           const didNotPlay = !performance;
           
+          // Check if this player is the Man of the Match
+          const isManOfMatch = manOfMatchPlayerId && teamPlayer.playerId === manOfMatchPlayerId;
+          
           if (didNotPlay) {
             console.log(`      ⚠️  ${teamPlayer.playerName}: Did not play in this match`);
           } else {
-            console.log(`      🏏 ${teamPlayer.playerName}: Processing performance...`);
+            console.log(`      🏏 ${teamPlayer.playerName}: Processing performance...${isManOfMatch ? ' 🏆 MAN OF MATCH!' : ''}`);
           }
+
+          // Build performance object with MoM flag
+          const performanceWithMoM = performance 
+            ? { ...performance, isManOfMatch }
+            : { runs: 0, ballsFaced: 0, fours: 0, sixes: 0, wickets: 0, ballsBowled: 0, runsConceded: 0, maidens: 0, catches: 0, runOuts: 0, stumpings: 0, isManOfMatch };
 
           // Calculate fantasy points (will be 0 for non-playing players)
           const fantasyPoints = this.calculateFantasyPoints(
-            performance || { runs: 0, ballsFaced: 0, fours: 0, sixes: 0, wickets: 0, ballsBowled: 0, runsConceded: 0, maidens: 0, catches: 0, runOuts: 0, stumpings: 0, isManOfMatch: false },
+            performanceWithMoM,
             battingRules,
             bowlingRules,
             fieldingRules,
@@ -135,8 +145,8 @@ const scorecardProcessorService = {
               runOuts: performance?.runOuts || 0,
               stumpings: performance?.stumpings || 0,
               
-              // Awards
-              isManOfMatch: performance?.isManOfMatch || false,
+              // Awards - use the MoM flag we determined above
+              isManOfMatch: isManOfMatch,
               
               // Calculated fantasy points
               fantasyPoints: fantasyPoints

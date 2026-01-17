@@ -8,5 +8,12 @@ router.get('/:id/live', authMiddleware, matchController.getLiveScore); // Live s
 router.get('/:id/scores', authMiddleware, matchController.getMatchScores); // Fantasy scores from DB
 router.get('/:id', authMiddleware, matchController.getMatchDetails);
 
+// Man of the Match
+router.put('/:matchId/man-of-match', authMiddleware, matchController.setManOfMatch);
+
+// Player of the Series
+router.put('/tournament/:tournamentId/player-of-series', authMiddleware, matchController.setPlayerOfSeries);
+router.post('/tournament/:tournamentId/apply-pots-bonus', authMiddleware, matchController.applyPlayerOfSeriesBonus);
+
 module.exports = router;
 

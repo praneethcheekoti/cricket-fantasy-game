@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Trophy, ArrowLeft, Users, Target, Shield, Loader2, Star, Crown } from 'lucide-react'
+import { Trophy, ArrowLeft, Users, Target, Shield, Loader2, Star, Crown, Eye } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
 
@@ -25,10 +25,34 @@ export default function MyTeamPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [captainMultiplier, setCaptainMultiplier] = useState(2)
   const [viceCaptainMultiplier, setViceCaptainMultiplier] = useState(1.5)
+  const [isCaptainsLocked, setIsCaptainsLocked] = useState(false)
+  
+  // View other teams
+  const [allTeams, setAllTeams] = useState<any[]>([])
+  const [selectedTeamId, setSelectedTeamId] = useState<string>('my-team')
+  const [viewingTeamOwner, setViewingTeamOwner] = useState<string>('')
+  const [currentUserId, setCurrentUserId] = useState<string>('')
 
   useEffect(() => {
+    // Get current user from localStorage
+    const userData = localStorage.getItem('user')
+    if (userData) {
+      const user = JSON.parse(userData)
+      setCurrentUserId(user.id)
+    }
     fetchTeamData()
+    fetchAllTeams()
   }, [params.id])
+
+  const fetchAllTeams = async () => {
+    try {
+      const teamsRes = await api.auction.getAllTeams(params.id as string)
+      setAllTeams(teamsRes.data || [])
+      console.log('📊 All Teams:', teamsRes.data)
+    } catch (error: any) {
+      console.error('Failed to fetch all teams:', error)
+    }
+  }
 
   const fetchTeamData = async () => {
     try {
@@ -54,8 +78,18 @@ export default function MyTeamPage() {
       const spent = (teamData.players || []).reduce((sum: number, p: any) => sum + p.purchasePrice, 0)
       setTotalCost(spent)
       setRemainingBalance(teamData.walletBalance || 0)
-      setCaptain(teamData.captainId || '')
-      setViceCaptain(teamData.viceCaptainId || '')
+      
+      // Find captain and vice-captain from players
+      const captainPlayer = (teamData.players || []).find((p: any) => p.isCaptain)
+      const viceCaptainPlayer = (teamData.players || []).find((p: any) => p.isViceCaptain)
+      
+      setCaptain(captainPlayer?.id || '')
+      setViceCaptain(viceCaptainPlayer?.id || '')
+      
+      // Lock if both captain and vice-captain are already set
+      if (captainPlayer && viceCaptainPlayer) {
+        setIsCaptainsLocked(true)
+      }
     } catch (error: any) {
       console.error('Failed to fetch team data:', error)
       toast({
@@ -67,6 +101,37 @@ export default function MyTeamPage() {
       setIsLoading(false)
     }
   }
+
+  const handleTeamChange = (teamId: string) => {
+    setSelectedTeamId(teamId)
+    
+    if (teamId === 'my-team') {
+      // Reset to my team
+      fetchTeamData()
+      setViewingTeamOwner('')
+    } else {
+      // Find the selected team and display it
+      const selectedTeam = allTeams.find(t => t.id === teamId)
+      if (selectedTeam) {
+        setPlayers(selectedTeam.players || [])
+        setViewingTeamOwner(selectedTeam.user?.name || 'Unknown')
+        
+        // Calculate stats for the selected team
+        const spent = (selectedTeam.players || []).reduce((sum: number, p: any) => sum + p.purchasePrice, 0)
+        setTotalCost(spent)
+        setRemainingBalance(selectedTeam.walletBalance || 0)
+        
+        // Find captain and vice-captain
+        const captainPlayer = (selectedTeam.players || []).find((p: any) => p.isCaptain)
+        const viceCaptainPlayer = (selectedTeam.players || []).find((p: any) => p.isViceCaptain)
+        setCaptain(captainPlayer?.id || '')
+        setViceCaptain(viceCaptainPlayer?.id || '')
+      }
+    }
+  }
+
+  // Determine if viewing own team
+  const isViewingOwnTeam = selectedTeamId === 'my-team'
 
   const handleSaveCaptains = async () => {
     if (!captain || !viceCaptain) {
@@ -91,9 +156,12 @@ export default function MyTeamPage() {
     try {
       await api.auction.setCaptain(params.id as string, captain, viceCaptain)
       
+      // Lock the selection after successful save
+      setIsCaptainsLocked(true)
+      
       toast({
         title: 'Captains saved!',
-        description: 'Your captain and vice-captain have been set',
+        description: 'Your captain and vice-captain have been locked in',
       })
     } catch (error: any) {
       toast({
@@ -180,13 +248,65 @@ export default function MyTeamPage() {
         </div>
 
         <div className="mb-8">
-          <h2 className="text-4xl font-bold mb-2 flex items-center gap-3">
-            <Users className="h-10 w-10 text-primary" />
-            My Team
-          </h2>
-          <p className="text-muted-foreground text-lg">
-            {tournament?.name} {tournament?.seriesName && `(${tournament.seriesName})`}
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h2 className="text-4xl font-bold mb-2 flex items-center gap-3">
+                <Users className="h-10 w-10 text-primary" />
+                {isViewingOwnTeam ? 'My Team' : `${viewingTeamOwner}'s Team`}
+              </h2>
+              <p className="text-muted-foreground text-lg">
+                {tournament?.name} {tournament?.seriesName && `(${tournament.seriesName})`}
+              </p>
+            </div>
+            
+            {/* Team Selector */}
+            {allTeams.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Eye className="h-5 w-5 text-muted-foreground" />
+                <Select value={selectedTeamId} onValueChange={handleTeamChange}>
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue placeholder="View team..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="my-team">
+                      <div className="flex items-center gap-2">
+                        <Crown className="h-4 w-4 text-primary" />
+                        My Team
+                      </div>
+                    </SelectItem>
+                    {allTeams
+                      .filter(team => team.user?.id !== currentUserId)
+                      .map((team) => (
+                        <SelectItem key={team.id} value={team.id}>
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                            {team.user?.name || 'Unknown'}'s Team
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          
+          {/* Viewing indicator */}
+          {!isViewingOwnTeam && (
+            <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg flex items-center gap-2">
+              <Eye className="h-4 w-4 text-blue-500" />
+              <span className="text-sm text-blue-600 dark:text-blue-400">
+                You are viewing <strong>{viewingTeamOwner}</strong>'s team (read-only)
+              </span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="ml-auto text-blue-600 hover:text-blue-700"
+                onClick={() => handleTeamChange('my-team')}
+              >
+                Back to My Team
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Team Stats */}
@@ -211,25 +331,28 @@ export default function MyTeamPage() {
           </Card>
         </div>
 
-        {/* Captain Selection */}
-        {players.length > 0 && (
-          <Card className="border-2 border-game-warning/20 bg-game-warning/5 mb-8">
+        {/* Captain Selection - Only show for own team */}
+        {players.length > 0 && isViewingOwnTeam && (
+          <Card className={`border-2 mb-8 ${isCaptainsLocked ? 'border-game-success/20 bg-game-success/5' : 'border-game-warning/20 bg-game-warning/5'}`}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Crown className="h-6 w-6 text-game-warning" />
-                Select Captain & Vice-Captain
+                <Crown className={`h-6 w-6 ${isCaptainsLocked ? 'text-game-success' : 'text-game-warning'}`} />
+                {isCaptainsLocked ? 'Captain & Vice-Captain (Locked)' : 'Select Captain & Vice-Captain'}
               </CardTitle>
               <CardDescription>
-                Captain gets {captainMultiplier}x points, 
-                Vice-Captain gets {viceCaptainMultiplier}x points
+                {isCaptainsLocked ? (
+                  <span className="text-game-success">✓ Your selection is locked and cannot be changed</span>
+                ) : (
+                  <>Captain gets {captainMultiplier}x points, Vice-Captain gets {viceCaptainMultiplier}x points</>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">Captain</label>
-                  <Select value={captain} onValueChange={setCaptain}>
-                    <SelectTrigger className="h-12">
+                  <Select value={captain} onValueChange={setCaptain} disabled={isCaptainsLocked}>
+                    <SelectTrigger className={`h-12 ${isCaptainsLocked ? 'opacity-60 cursor-not-allowed' : ''}`}>
                       <SelectValue placeholder="Select captain" />
                     </SelectTrigger>
                     <SelectContent>
@@ -246,8 +369,8 @@ export default function MyTeamPage() {
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-semibold">Vice-Captain</label>
-                  <Select value={viceCaptain} onValueChange={setViceCaptain}>
-                    <SelectTrigger className="h-12">
+                  <Select value={viceCaptain} onValueChange={setViceCaptain} disabled={isCaptainsLocked}>
+                    <SelectTrigger className={`h-12 ${isCaptainsLocked ? 'opacity-60 cursor-not-allowed' : ''}`}>
                       <SelectValue placeholder="Select vice-captain" />
                     </SelectTrigger>
                     <SelectContent>
@@ -263,20 +386,29 @@ export default function MyTeamPage() {
                   </Select>
                 </div>
               </div>
-              <Button
-                onClick={handleSaveCaptains}
-                className="w-full mt-6 h-12 text-base font-bold bg-game-warning hover:bg-game-warning/90"
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save Captains'
-                )}
-              </Button>
+              {isCaptainsLocked ? (
+                <div className="w-full mt-6 h-12 flex items-center justify-center bg-game-success/20 rounded-md border border-game-success/30">
+                  <span className="text-game-success font-semibold flex items-center gap-2">
+                    <Shield className="h-5 w-5" />
+                    Selection Locked
+                  </span>
+                </div>
+              ) : (
+                <Button
+                  onClick={handleSaveCaptains}
+                  className="w-full mt-6 h-12 text-base font-bold bg-game-warning hover:bg-game-warning/90"
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save & Lock Captains'
+                  )}
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Trophy, Plus, LogIn, Users, Calendar, Loader2, LogOut, MoreVertical, Trash2 } from 'lucide-react'
+import { Trophy, Plus, LogIn, Users, Calendar, Loader2, LogOut, MoreVertical, Trash2, Eye, EyeOff } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import {
   DropdownMenu,
@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [joinCode, setJoinCode] = useState('')
   const [isJoining, setIsJoining] = useState(false)
   const [deletingTournamentId, setDeletingTournamentId] = useState<string | null>(null)
+  const [showCompleted, setShowCompleted] = useState(false)
 
   useEffect(() => {
     const userData = localStorage.getItem('user')
@@ -239,12 +240,34 @@ export default function DashboardPage() {
 
         {/* Active Tournaments */}
         <div>
-          <h3 className="text-2xl font-bold mb-6 flex items-center gap-2">
-            <Trophy className="h-6 w-6 text-primary" />
-            Your Tournaments
-          </h3>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-2xl font-bold flex items-center gap-2">
+              <Trophy className="h-6 w-6 text-primary" />
+              Your Tournaments
+            </h3>
+            {tournaments.some(t => t.status === 'completed') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCompleted(!showCompleted)}
+                className="flex items-center gap-2"
+              >
+                {showCompleted ? (
+                  <>
+                    <EyeOff className="h-4 w-4" />
+                    Hide Completed
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-4 w-4" />
+                    Show Completed ({tournaments.filter(t => t.status === 'completed').length})
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
           
-          {tournaments.length === 0 ? (
+          {tournaments.filter(t => showCompleted || t.status !== 'completed').length === 0 ? (
             <Card className="border-2 border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <Calendar className="h-16 w-16 text-muted-foreground mb-4" />
@@ -258,7 +281,9 @@ export default function DashboardPage() {
             </Card>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tournaments.map((tournament: any) => {
+              {tournaments
+                .filter(t => showCompleted || t.status !== 'completed')
+                .map((tournament: any) => {
                 const canDelete = tournament.creatorId === user?.id && 
                                  tournament.participants?.length === 1
                 
@@ -272,8 +297,18 @@ export default function DashboardPage() {
                               <Trophy className="h-6 w-6 text-white" />
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="px-3 py-1 bg-accent/10 text-accent text-sm font-semibold rounded-full capitalize">
-                                {tournament.status}
+                              <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
+                                tournament.status === 'completed' 
+                                  ? 'bg-green-500/10 text-green-500' 
+                                  : tournament.status === 'auction_complete'
+                                  ? 'bg-blue-500/10 text-blue-500'
+                                  : 'bg-accent/10 text-accent'
+                              }`}>
+                                {tournament.status === 'auction_complete' 
+                                  ? 'Auction Complete' 
+                                  : tournament.status === 'completed'
+                                  ? 'Completed'
+                                  : tournament.status.charAt(0).toUpperCase() + tournament.status.slice(1)}
                               </span>
                               {canDelete && (
                                 <DropdownMenu>

@@ -407,6 +407,41 @@ export const api = {
         data: Array<any>
       }>(response)
     },
+
+    setManOfMatch: async (matchId: string, playerId: string, playerName: string) => {
+      const response = await fetch(`${API_URL}/matches/${matchId}/man-of-match`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+        body: JSON.stringify({ playerId, playerName }),
+      })
+      return handleResponse(response)
+    },
+
+    setPlayerOfSeries: async (tournamentId: string, playerId: string, playerName: string) => {
+      const response = await fetch(`${API_URL}/matches/tournament/${tournamentId}/player-of-series`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+        body: JSON.stringify({ playerId, playerName }),
+      })
+      return handleResponse(response)
+    },
+
+    applyPlayerOfSeriesBonus: async (tournamentId: string) => {
+      const response = await fetch(`${API_URL}/matches/tournament/${tournamentId}/apply-pots-bonus`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAuthToken()}`,
+        },
+      })
+      return handleResponse(response)
+    },
   },
 }
 

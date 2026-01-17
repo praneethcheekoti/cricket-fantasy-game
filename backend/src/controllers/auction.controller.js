@@ -656,37 +656,119 @@ const auctionController = {
   },
 
   /**
-   * Check if all players are processed and mark auction as completed
+   * Check if all players are processed and either:
+   * - Reset unsold players for another round, OR
+   * - Mark auction as completed (when all sold OR no progress in retry round)
    */
   async checkAndCompleteAuction(tournamentId) {
     try {
       console.log(`🔍 Checking auction completion for tournament: ${tournamentId}`);
       
+      // Get tournament to check lastRoundUnsoldCount
+      const tournament = await prisma.tournament.findUnique({
+        where: { id: tournamentId }
+      });
+
+      if (!tournament) {
+        console.error(`❌ Tournament not found: ${tournamentId}`);
+        return;
+      }
+
       // Get all auction players
       const allPlayers = await prisma.auctionPlayer.findMany({
         where: { tournamentId }
       });
 
       console.log(`📊 Total players: ${allPlayers.length}`);
-      console.log(`📊 Player statuses:`, allPlayers.map(p => `${p.playerName}: ${p.status}`));
+      
+      // Count by status
+      const soldPlayers = allPlayers.filter(p => p.status === 'sold');
+      const unsoldPlayers = allPlayers.filter(p => p.status === 'unsold');
+      const availablePlayers = allPlayers.filter(p => p.status === 'available');
+      
+      console.log(`📊 Status breakdown: ${soldPlayers.length} sold, ${unsoldPlayers.length} unsold, ${availablePlayers.length} available`);
+      console.log(`📊 Last round unsold count: ${tournament.lastRoundUnsoldCount}`);
 
-      // Check if all are processed (sold or unsold)
-      const allProcessed = allPlayers.every(p => p.status === 'sold' || p.status === 'unsold');
+      // Check if round is complete (no available players left)
+      const roundComplete = availablePlayers.length === 0;
       
-      console.log(`✅ All processed? ${allProcessed}`);
-      
-      if (allProcessed && allPlayers.length > 0) {
-        // Update tournament status to completed
-        const updatedTournament = await prisma.tournament.update({
+      if (!roundComplete) {
+        console.log(`⏳ Round not complete yet. ${availablePlayers.length} players still available.`);
+        return;
+      }
+
+      // Round is complete - check if there are unsold players
+      if (unsoldPlayers.length === 0) {
+        // All players are SOLD - auction truly complete!
+        await prisma.tournament.update({
           where: { id: tournamentId },
-          data: { status: 'completed' }
+          data: { 
+            status: 'auction_complete',  // Changed from 'completed' - matches still pending
+            lastRoundUnsoldCount: 0  // Reset for next time
+          }
         });
         
-        console.log(`🎉 Auction completed for tournament ${tournamentId}! All ${allPlayers.length} players processed.`);
-        console.log(`✅ Tournament status updated to: ${updatedTournament.status}`);
-      } else {
-        console.log(`⏳ Auction not complete yet. ${allPlayers.filter(p => p.status === 'available').length} players still available.`);
+        console.log(`🎉 Auction COMPLETED for tournament ${tournamentId}!`);
+        console.log(`   ✅ All ${allPlayers.length} players have been sold.`);
+        console.log(`   📋 Status set to 'auction_complete' - matches pending.`);
+        return;
       }
+
+      // There are unsold players - check if this is a "no progress" round
+      // If lastRoundUnsoldCount > 0 and current unsold >= that count, no sales happened
+      if (tournament.lastRoundUnsoldCount > 0 && unsoldPlayers.length >= tournament.lastRoundUnsoldCount) {
+        // No progress made - same (or more) players remain unsold
+        // This means no one wants these players - auction complete
+        await prisma.tournament.update({
+          where: { id: tournamentId },
+          data: { 
+            status: 'auction_complete',  // Changed from 'completed' - matches still pending
+            lastRoundUnsoldCount: 0  // Reset for next time
+          }
+        });
+        
+        console.log(`🏁 Auction COMPLETED for tournament ${tournamentId}!`);
+        console.log(`   ⚠️  No progress in retry round - ${unsoldPlayers.length} player(s) remain unsold.`);
+        console.log(`   📋 Unsold players: ${unsoldPlayers.map(p => p.playerName).join(', ')}`);
+        console.log(`   ℹ️  These players received no bids in the retry round.`);
+        console.log(`   📋 Status set to 'auction_complete' - matches pending.`);
+        return;
+      }
+
+      // Progress was made (some players sold in retry round) OR this is first round with unsold players
+      // Give unsold players another chance!
+      console.log(`🔄 Round complete! ${unsoldPlayers.length} unsold player(s) will get another chance.`);
+      console.log(`   Unsold players: ${unsoldPlayers.map(p => p.playerName).join(', ')}`);
+
+      // Reset each unsold player for the next round
+      for (const player of unsoldPlayers) {
+        // Delete all previous bids for this player (clean slate)
+        await prisma.bid.deleteMany({
+          where: { playerId: player.id }
+        });
+
+        // Reset player to available with base price
+        await prisma.auctionPlayer.update({
+          where: { id: player.id },
+          data: {
+            status: 'available',
+            currentPrice: player.basePrice, // Reset to base price
+            soldTo: null
+          }
+        });
+
+        console.log(`   ✅ ${player.playerName} reset to available (base price: ${player.basePrice / 10000000} Cr)`);
+      }
+
+      // Store the count of unsold players for next round comparison
+      await prisma.tournament.update({
+        where: { id: tournamentId },
+        data: { lastRoundUnsoldCount: unsoldPlayers.length }
+      });
+
+      console.log(`🔔 New round starting! ${unsoldPlayers.length} player(s) available for bidding again.`);
+      console.log(`   📝 Tracking ${unsoldPlayers.length} unsold for progress check.`);
+      
     } catch (error) {
       console.error('❌ Error checking auction completion:', error);
       // Don't throw - this is a background check

@@ -6,7 +6,8 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Trophy, ArrowLeft, Calendar, CheckCircle2, Loader2, Activity, Clock, MapPin, Calculator } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Trophy, ArrowLeft, Calendar, CheckCircle2, Loader2, Activity, Clock, MapPin, Calculator, Award, Star, Crown } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/api'
 
@@ -19,6 +20,13 @@ export default function MatchCenterPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isFetchingMatches, setIsFetchingMatches] = useState(false) // Loading state for matches
   const [isCalculating, setIsCalculating] = useState<string | null>(null) // matchId being calculated
+  const [auctionPlayers, setAuctionPlayers] = useState<any[]>([]) // All players from auction
+  const [momSelections, setMomSelections] = useState<Record<string, { playerId: string; playerName: string }>>({}) // MoM per match
+  const [isSavingMom, setIsSavingMom] = useState<string | null>(null) // matchId being saved
+  const [playerOfSeries, setPlayerOfSeries] = useState<{ playerId: string; playerName: string } | null>(null)
+  const [isSavingPots, setIsSavingPots] = useState(false)
+  const [isApplyingPotsBonus, setIsApplyingPotsBonus] = useState(false)
+  const [potsApplied, setPotsApplied] = useState(false)
 
   useEffect(() => {
     fetchTournamentData()
@@ -40,6 +48,25 @@ export default function MatchCenterPage() {
       console.log('Series object:', tournamentRes.data?.series)
       console.log('API Series ID:', tournamentRes.data?.series?.apiSeriesId)
       setTournament(tournamentRes.data)
+      
+      // Set PoTS if already selected
+      if (tournamentRes.data?.playerOfSeriesId) {
+        setPlayerOfSeries({
+          playerId: tournamentRes.data.playerOfSeriesId,
+          playerName: tournamentRes.data.playerOfSeriesName || ''
+        })
+      }
+      setPotsApplied(tournamentRes.data?.playerOfSeriesApplied || false)
+      
+      // Fetch auction players for dropdown
+      try {
+        const auctionRes = await api.auction.getPlayers(params.id as string)
+        const soldPlayers = (auctionRes.data || []).filter((p: any) => p.status === 'sold')
+        setAuctionPlayers(soldPlayers)
+        console.log('Auction players loaded:', soldPlayers.length)
+      } catch (err) {
+        console.log('Could not load auction players:', err)
+      }
     } catch (error: any) {
       console.error('Failed to fetch tournament:', error)
       toast({
@@ -75,6 +102,18 @@ export default function MatchCenterPage() {
       const data = await response.json()
       console.log('✅ Matches loaded from DB:', data.data)
       setMatches(data.data || [])
+      
+      // Initialize MoM selections from loaded matches
+      const momMap: Record<string, { playerId: string; playerName: string }> = {}
+      for (const match of data.data || []) {
+        if (match.manOfMatchPlayerId) {
+          momMap[match.id] = {
+            playerId: match.manOfMatchPlayerId,
+            playerName: match.manOfMatchName || ''
+          }
+        }
+      }
+      setMomSelections(momMap)
     } catch (error: any) {
       console.error('Failed to load matches:', error)
       toast({
@@ -119,6 +158,18 @@ export default function MatchCenterPage() {
       
       setMatches(data.data || [])
       
+      // Initialize MoM selections from refreshed matches
+      const momMap: Record<string, { playerId: string; playerName: string }> = {}
+      for (const match of data.data || []) {
+        if (match.manOfMatchPlayerId) {
+          momMap[match.id] = {
+            playerId: match.manOfMatchPlayerId,
+            playerName: match.manOfMatchName || ''
+          }
+        }
+      }
+      setMomSelections(momMap)
+      
       // Show success message
       toast({
         title: '✅ Matches Refreshed',
@@ -136,7 +187,97 @@ export default function MatchCenterPage() {
     }
   }
 
+  const handleMomSelection = async (matchId: string, playerId: string) => {
+    const player = auctionPlayers.find(p => p.playerId === playerId)
+    if (!player) return
+
+    setIsSavingMom(matchId)
+    try {
+      await api.matches.setManOfMatch(matchId, playerId, player.playerName)
+      
+      setMomSelections(prev => ({
+        ...prev,
+        [matchId]: { playerId, playerName: player.playerName }
+      }))
+      
+      toast({
+        title: '🏆 Man of Match Set',
+        description: `${player.playerName} selected as Man of the Match`,
+      })
+    } catch (error: any) {
+      console.error('Failed to set MoM:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to set Man of Match',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsSavingMom(null)
+    }
+  }
+
+  const handlePotsSelection = async (playerId: string) => {
+    const player = auctionPlayers.find(p => p.playerId === playerId)
+    if (!player) return
+
+    setIsSavingPots(true)
+    try {
+      await api.matches.setPlayerOfSeries(params.id as string, playerId, player.playerName)
+      
+      setPlayerOfSeries({ playerId, playerName: player.playerName })
+      
+      toast({
+        title: '⭐ Player of Series Set',
+        description: `${player.playerName} selected as Player of the Series`,
+      })
+    } catch (error: any) {
+      console.error('Failed to set PoTS:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to set Player of Series',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsSavingPots(false)
+    }
+  }
+
+  const handleApplyPotsBonus = async () => {
+    if (!playerOfSeries) return
+
+    setIsApplyingPotsBonus(true)
+    try {
+      const result = await api.matches.applyPlayerOfSeriesBonus(params.id as string)
+      
+      setPotsApplied(true)
+      
+      toast({
+        title: '✅ Bonus Applied!',
+        description: `Player of Series bonus applied to ${playerOfSeries.playerName}`,
+      })
+    } catch (error: any) {
+      console.error('Failed to apply PoTS bonus:', error)
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to apply Player of Series bonus',
+        variant: 'destructive'
+      })
+    } finally {
+      setIsApplyingPotsBonus(false)
+    }
+  }
+
   const handleCalculatePoints = async (matchId: string) => {
+    // Check if MoM is selected
+    if (!momSelections[matchId]) {
+      toast({
+        title: 'Man of Match Required',
+        description: 'Please select Man of the Match before calculating points',
+        variant: 'destructive'
+      })
+      return
+    }
+
     try {
       setIsCalculating(matchId)
       console.log('Calculating points for match:', matchId)
@@ -168,7 +309,7 @@ export default function MatchCenterPage() {
       })
 
       // Refresh match list to show updated status
-      await fetchMatches()
+      await loadMatchesFromDB()
     } catch (error: any) {
       console.error('Failed to calculate points:', error)
       toast({
@@ -180,6 +321,10 @@ export default function MatchCenterPage() {
       setIsCalculating(null)
     }
   }
+
+  // Check if all matches are completed
+  const allMatchesCompleted = matches.length > 0 && matches.every(m => m.status === 'completed')
+  const allMatchesProcessed = matches.length > 0 && matches.every(m => m.isProcessed)
 
   const getMatchStatusBadge = (match: any) => {
     if (match.status === 'completed') {
@@ -354,38 +499,86 @@ export default function MatchCenterPage() {
                               </p>
                             )}
                           </div>
+
+                          {/* Man of Match Selection - Only for completed matches */}
+                          {match.status === 'completed' && (
+                            <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Award className="w-4 h-4 text-amber-500" />
+                                <span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+                                  Man of the Match
+                                </span>
+                                {momSelections[match.id] && (
+                                  <Badge variant="outline" className="bg-amber-500/20 text-amber-600 border-amber-500/30 ml-2">
+                                    ✓ Selected
+                                  </Badge>
+                                )}
+                              </div>
+                              <Select
+                                value={momSelections[match.id]?.playerId || ''}
+                                onValueChange={(value) => handleMomSelection(match.id, value)}
+                                disabled={match.isProcessed || isSavingMom === match.id}
+                              >
+                                <SelectTrigger className={`w-full ${match.isProcessed ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                  <SelectValue placeholder="Select Man of the Match" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {auctionPlayers.map((player) => (
+                                    <SelectItem key={player.playerId} value={player.playerId}>
+                                      <div className="flex items-center gap-2">
+                                        <Award className="h-4 w-4 text-amber-500" />
+                                        {player.playerName} ({player.role})
+                                      </div>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {match.isProcessed && momSelections[match.id] && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  🏆 {momSelections[match.id].playerName} (locked)
+                                </p>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Action Button */}
-                        <div className="ml-4">
+                        <div className="ml-4 min-w-[200px]">
                           {match.status === 'completed' && !match.isProcessed && (
-                            <Button
-                              onClick={() => handleCalculatePoints(match.id)}
-                              disabled={isCalculating === match.id}
-                              className="bg-gradient-to-r from-primary to-secondary"
-                            >
-                              {isCalculating === match.id ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  Calculating...
-                                </>
-                              ) : (
-                                <>
-                                  <Calculator className="w-4 h-4 mr-2" />
-                                  Calculate Fantasy Points
-                                </>
+                            <div className="space-y-2">
+                              <Button
+                                onClick={() => handleCalculatePoints(match.id)}
+                                disabled={isCalculating === match.id || !momSelections[match.id]}
+                                className={`w-full ${momSelections[match.id] ? 'bg-gradient-to-r from-primary to-secondary' : 'bg-muted'}`}
+                              >
+                                {isCalculating === match.id ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    Calculating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Calculator className="w-4 h-4 mr-2" />
+                                    Calculate Points
+                                  </>
+                                )}
+                              </Button>
+                              {!momSelections[match.id] && (
+                                <p className="text-xs text-amber-600 text-center">
+                                  ⚠️ Select MoM first
+                                </p>
                               )}
-                            </Button>
+                            </div>
                           )}
 
                           {match.status === 'completed' && match.isProcessed && (
                             <div className="text-center">
                               <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-2" />
                               <p className="text-sm font-medium text-green-600">
-                                Fantasy Points Calculated
+                                Points Calculated
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {match.playerCount} players processed
+                                {match.playerCount} players
                               </p>
                             </div>
                           )}
@@ -407,6 +600,107 @@ export default function MatchCenterPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Player of the Series Section */}
+        {matches.length > 0 && (
+          <Card className={`mt-8 border-2 ${allMatchesCompleted ? 'border-purple-500/30 bg-purple-500/5' : 'border-muted/50 bg-muted/5'}`}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Star className={`h-6 w-6 ${allMatchesCompleted ? 'text-purple-500' : 'text-muted-foreground'}`} />
+                Player of the Series
+              </CardTitle>
+              <CardDescription>
+                {allMatchesCompleted 
+                  ? 'All matches completed. Select the Player of the Series and apply bonus points.'
+                  : 'This section will be available after all matches are completed.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!allMatchesCompleted ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Clock className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">
+                    {matches.filter(m => m.status === 'completed').length} of {matches.length} matches completed
+                  </p>
+                  <p className="text-xs mt-1">
+                    Complete all matches to select Player of the Series
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold flex items-center gap-2">
+                        <Crown className="w-4 h-4 text-purple-500" />
+                        Select Player
+                      </label>
+                      <Select
+                        value={playerOfSeries?.playerId || ''}
+                        onValueChange={handlePotsSelection}
+                        disabled={potsApplied || isSavingPots}
+                      >
+                        <SelectTrigger className={`h-12 ${potsApplied ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                          <SelectValue placeholder="Select Player of the Series" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {auctionPlayers.map((player) => (
+                            <SelectItem key={player.playerId} value={player.playerId}>
+                              <div className="flex items-center gap-2">
+                                <Star className="h-4 w-4 text-purple-500" />
+                                {player.playerName} ({player.role})
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-end">
+                      {potsApplied ? (
+                        <div className="w-full h-12 flex items-center justify-center bg-green-500/20 rounded-md border border-green-500/30">
+                          <span className="text-green-600 font-semibold flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5" />
+                            Bonus Applied to {playerOfSeries?.playerName}
+                          </span>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={handleApplyPotsBonus}
+                          disabled={!playerOfSeries || isApplyingPotsBonus || !allMatchesProcessed}
+                          className="w-full h-12 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+                        >
+                          {isApplyingPotsBonus ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Applying Bonus...
+                            </>
+                          ) : (
+                            <>
+                              <Star className="w-4 h-4 mr-2" />
+                              Apply PoTS Bonus
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {!allMatchesProcessed && allMatchesCompleted && (
+                    <p className="text-xs text-amber-600 text-center">
+                      ⚠️ Calculate fantasy points for all matches before applying Player of Series bonus
+                    </p>
+                  )}
+
+                  {playerOfSeries && !potsApplied && (
+                    <p className="text-sm text-center text-muted-foreground">
+                      Selected: <span className="font-semibold text-purple-500">{playerOfSeries.playerName}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </main>
     </div>
   )
